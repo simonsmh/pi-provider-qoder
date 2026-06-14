@@ -36,7 +36,7 @@
     "@biomejs/biome": "2.4.2",
     "@earendil-works/pi-ai": "^0.75.5",
     "@earendil-works/pi-coding-agent": "^0.75.5",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.7.0"
   },
   "repository": {
