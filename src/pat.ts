@@ -1,9 +1,14 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
-import { getMachineId } from "./cosy.js";
+import {
+  getMachineId,
+  getQoderExchangeURL,
+  getQoderMode,
+  getQoderUserEmailFallback,
+  getQoderUserInfoURL,
+  isQoderCNMode,
+} from "./cosy.js";
 
 const UA = "pi-provider-qoder";
-const EXCHANGE_URL = "https://openapi.qoder.sh/api/v1/jobToken/exchange";
-const USERINFO_URL = "https://openapi.qoder.sh/api/v1/userinfo";
 
 /**
  * Marker prefix used in the credential `refresh` field to identify PAT-based
@@ -47,12 +52,12 @@ export function decodePatRefresh(refresh: string): {
 /**
  * Exchange a Qoder Personal Access Token (pt-...) for a short-lived Job Token
  * (jt-...). PATs cannot authenticate API calls directly; they must first be
- * exchanged. This mirrors the official qodercli flow:
- *   POST /api/v1/jobToken/exchange { personal_token }  -> { token, refresh_token, expires_at }
+ * exchanged. This mirrors the official qodercli/qoderclicn flow:
+ *   POST /api/v1/jobToken/exchange { personal_token } -> { token, refresh_token, expires_at }
  * The exchange endpoint does not require a COSY signature.
  */
-export async function exchangeJobToken(pat: string): Promise<PatExchangeResult> {
-  const res = await fetch(EXCHANGE_URL, {
+export async function exchangeJobToken(pat: string, mode: string = getQoderMode()): Promise<PatExchangeResult> {
+  const res = await fetch(getQoderExchangeURL(mode), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -97,12 +102,12 @@ export async function exchangeJobToken(pat: string): Promise<PatExchangeResult> 
 }
 
 /** Fetch user profile using a job token (jt-...). Best-effort. */
-async function fetchUserInfo(jobToken: string): Promise<{ userID: string; email: string; name: string }> {
+async function fetchUserInfo(jobToken: string, mode: string): Promise<{ userID: string; email: string; name: string }> {
   let userID = "";
   let email = "";
   let name = "";
   try {
-    const res = await fetch(USERINFO_URL, {
+    const res = await fetch(getQoderUserInfoURL(mode), {
       headers: {
         Authorization: `Bearer ${jobToken}`,
         Accept: "application/json",
@@ -131,9 +136,9 @@ async function fetchUserInfo(jobToken: string): Promise<{ userID: string; email:
  * Exchanges the PAT for a job token, resolves identity, and encodes the PAT
  * into the refresh field so the token can be re-exchanged on expiry.
  */
-export async function credentialsFromPat(pat: string): Promise<OAuthCredentials> {
-  const { jobToken, jobRefreshToken, expiresAt } = await exchangeJobToken(pat);
-  const { userID, email, name } = await fetchUserInfo(jobToken);
+export async function credentialsFromPat(pat: string, mode: string = getQoderMode()): Promise<OAuthCredentials> {
+  const { jobToken, jobRefreshToken, expiresAt } = await exchangeJobToken(pat, mode);
+  const { userID, email, name } = await fetchUserInfo(jobToken, mode);
   const machineID = getMachineId();
 
   return {
@@ -141,8 +146,8 @@ export async function credentialsFromPat(pat: string): Promise<OAuthCredentials>
     access: jobToken,
     expires: expiresAt - 5 * 60 * 1000, // 5 min buffer
     userID,
-    email,
-    name,
+    email: email || getQoderUserEmailFallback(mode),
+    name: name || (isQoderCNMode(mode) ? "Qoder CN User" : "Qoder User"),
     machineID,
   } as OAuthCredentials;
 }

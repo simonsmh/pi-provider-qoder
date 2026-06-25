@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
-import { getMachineId } from "./cosy.js";
+import { getMachineId, getQoderMode, isQoderCNMode } from "./cosy.js";
 import { credentialsFromPat } from "./pat.js";
 
 type PromptFn = (p: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
@@ -36,20 +36,31 @@ function parseExpiresAt(s?: string, expiresInSeconds?: number): number {
   return Date.now() + 30 * 24 * 60 * 60 * 1000; // default 30 days
 }
 
-export async function interactiveLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+export async function interactiveLogin(
+  callbacks: OAuthLoginCallbacks,
+  mode: string = getQoderMode(),
+): Promise<OAuthCredentials> {
   // pi drives this via its built-in LoginDialog, which wires onPrompt/onAuth/
   // onProgress to a focused input. We must use those callbacks directly rather
   // than opening our own ctx.ui.custom surface (which would steal focus and
   // leave onPrompt unable to receive keystrokes).
   const prompt = getPrompt(callbacks);
   const pat = await prompt({
-    message: "Paste a Qoder Personal Access Token (pt-...), or leave empty for browser login",
+    message: isQoderCNMode(mode)
+      ? "Paste a Qoder CN Personal Access Token, or leave empty to cancel"
+      : "Paste a Qoder Personal Access Token (pt-...), or leave empty for browser login",
     placeholder: "pt-...",
     allowEmpty: true,
   });
   if (getSignal(callbacks)?.aborted) throw new Error("Login cancelled");
   if (pat?.trim()) {
-    return patLogin(callbacks, pat.trim());
+    return patLogin(callbacks, pat.trim(), mode);
+  }
+
+  if (isQoderCNMode(mode)) {
+    throw new Error(
+      "Qoder CN browser login is not supported here. Paste a Qoder CN PAT from https://qoder.com.cn/account/integrations or set QODERCN_PERSONAL_ACCESS_TOKEN.",
+    );
   }
 
   if (getSignal(callbacks)?.aborted) throw new Error("Login cancelled");
@@ -57,12 +68,18 @@ export async function interactiveLogin(callbacks: OAuthLoginCallbacks): Promise<
 }
 
 /** Prompt for a PAT (if not provided) and exchange it for full credentials. */
-async function patLogin(callbacks: OAuthLoginCallbacks, providedPat?: string): Promise<OAuthCredentials> {
+async function patLogin(
+  callbacks: OAuthLoginCallbacks,
+  providedPat?: string,
+  mode: string = getQoderMode(),
+): Promise<OAuthCredentials> {
   let pat = providedPat;
   if (!pat) {
     const prompt = getPrompt(callbacks);
     const entered = await prompt({
-      message: "Paste your Qoder Personal Access Token (pt-...)",
+      message: isQoderCNMode(mode)
+        ? "Paste your Qoder CN Personal Access Token"
+        : "Paste your Qoder Personal Access Token (pt-...)",
       placeholder: "pt-...",
       allowEmpty: false,
     });
@@ -73,7 +90,7 @@ async function patLogin(callbacks: OAuthLoginCallbacks, providedPat?: string): P
     throw new Error("No Personal Access Token provided");
   }
   getProgress(callbacks)?.("Exchanging access token...");
-  const creds = await credentialsFromPat(pat);
+  const creds = await credentialsFromPat(pat, mode);
   getProgress(callbacks)?.("Login successful!");
   return creds;
 }

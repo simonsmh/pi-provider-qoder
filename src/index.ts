@@ -1,15 +1,61 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { getCachedModels, isCacheStale, staticModels, updateQoderModelsCache } from "./models.js";
-import { getCachedCredentials, loginQoder, refreshQoderToken } from "./oauth.js";
+import {
+  getQoderBaseUrl,
+  getQoderMode,
+  getQoderUserEmailFallback,
+  isQoderCNMode,
+  toQoderCNFriendlyModel,
+} from "./cosy.js";
+import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./models.js";
+import { getCachedCredentials, loginQoder, loginQoderCN, refreshQoderToken, refreshQoderTokenCN } from "./oauth.js";
 import { streamQoder } from "./stream.js";
-import { fetchQoderUsage } from "./usage.js";
+import { fetchQoderUsage, fetchQoderUsageCN } from "./usage.js";
 
 // pi supports a `fetchUsage` hook on the oauth config at runtime, but it is not
 // part of the published ProviderConfig type. Declare the extension locally.
 type OAuthConfigWithUsage = NonNullable<ProviderConfig["oauth"]> & {
-  fetchUsage: typeof fetchQoderUsage;
+  fetchUsage: (credentials: OAuthCredentials) => Promise<unknown>;
 };
+
+function modelsForProvider(mode: string, providerID: string): Model<Api>[] {
+  const cached = getCachedModels(mode);
+  const modelsToUse = cached.length > 0 ? cached : isQoderCNMode(mode) ? staticCnModels : staticModels;
+
+  return modelsToUse.map((m) => {
+    const model = isQoderCNMode(mode) ? toQoderCNFriendlyModel(m) : m;
+    return {
+      ...model,
+      provider: providerID,
+      baseUrl: getQoderBaseUrl(mode),
+    };
+  }) as unknown as Model<Api>[];
+}
+
+function createQoderOAuth(providerID: string, mode: string): OAuthConfigWithUsage {
+  return {
+    name: isQoderCNMode(mode) ? "Qoder CN (PAT)" : "Qoder (Browser OAuth / PAT)",
+    login: isQoderCNMode(mode) ? loginQoderCN : loginQoder,
+    refreshToken: isQoderCNMode(mode) ? refreshQoderTokenCN : refreshQoderToken,
+    getApiKey: (cred: OAuthCredentials) => cred.access,
+    modifyModels: (models: Model<Api>[], _cred: OAuthCredentials) => {
+      const nonQoder = models.filter((m: Model<Api>) => m.provider !== providerID);
+      return [...nonQoder, ...modelsForProvider(mode, providerID)];
+    },
+    fetchUsage: isQoderCNMode(mode) ? fetchQoderUsageCN : fetchQoderUsage,
+  };
+}
+
+function registerQoderProvider(pi: ExtensionAPI, providerID: string, mode: string): void {
+  const oauth = createQoderOAuth(providerID, mode);
+  pi.registerProvider(providerID, {
+    baseUrl: getQoderBaseUrl(mode),
+    api: "qoder-api" as Api,
+    models: modelsForProvider(mode, providerID) as unknown as ProviderConfig["models"],
+    oauth: oauth as ProviderConfig["oauth"],
+    streamSimple: streamQoder,
+  });
+}
 
 export default function (pi: ExtensionAPI) {
   // Refresh the models cache once per session at startup if it is missing or
@@ -17,43 +63,24 @@ export default function (pi: ExtensionAPI) {
   // Login/refresh are the other rebuild triggers; this covers the case where
   // the cache was deleted while the token is still valid.
   pi.on("session_start", async (_event, ctx) => {
-    try {
-      const accessToken = await ctx.modelRegistry.getApiKeyForProvider("qoder");
-      if (!accessToken || !isCacheStale()) return;
-      const creds = getCachedCredentials(accessToken);
-      const userID = creds?.userID || "qoder-user";
-      const name = creds?.name || "Qoder User";
-      const email = creds?.email || "user@qoder.com";
-      await updateQoderModelsCache(accessToken, userID, name, email);
-    } catch {
-      // Best-effort: fall back to the existing cache / static models.
+    for (const [providerID, mode] of [
+      ["qoder", getQoderMode()],
+      ["qoder-cn", "cn"],
+    ] as const) {
+      try {
+        const accessToken = await ctx.modelRegistry.getApiKeyForProvider(providerID);
+        if (!accessToken || !isCacheStale(mode)) continue;
+        const creds = getCachedCredentials(accessToken, providerID);
+        const userID = creds?.userID || "qoder-user";
+        const name = creds?.name || (isQoderCNMode(mode) ? "Qoder CN User" : "Qoder User");
+        const email = creds?.email || getQoderUserEmailFallback(mode);
+        await updateQoderModelsCache(accessToken, userID, name, email, mode);
+      } catch {
+        // Best-effort: fall back to the existing cache / static models.
+      }
     }
   });
 
-  const oauth: OAuthConfigWithUsage = {
-    name: "Qoder (Browser OAuth / PAT)",
-    login: loginQoder,
-    refreshToken: refreshQoderToken,
-    getApiKey: (cred: OAuthCredentials) => cred.access,
-    modifyModels: (models: Model<Api>[], _cred: OAuthCredentials) => {
-      const cached = getCachedModels();
-      const nonQoder = models.filter((m: Model<Api>) => m.provider !== "qoder");
-      const modelsToUse = cached.length > 0 ? cached : staticModels;
-      const modifiedQoder = modelsToUse.map((m) => ({
-        ...m,
-        baseUrl: "https://api3.qoder.sh/",
-      })) as Model<Api>[];
-
-      return [...nonQoder, ...modifiedQoder];
-    },
-    fetchUsage: fetchQoderUsage,
-  };
-
-  pi.registerProvider("qoder", {
-    baseUrl: "https://api3.qoder.sh/",
-    api: "qoder-api" as Api,
-    models: getCachedModels() as unknown as ProviderConfig["models"],
-    oauth: oauth as ProviderConfig["oauth"],
-    streamSimple: streamQoder,
-  });
+  registerQoderProvider(pi, "qoder", getQoderMode());
+  registerQoderProvider(pi, "qoder-cn", "cn");
 }

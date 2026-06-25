@@ -11,7 +11,15 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import * as PiAi from "@earendil-works/pi-ai";
-import { buildAuthHeaders, getMachineId } from "./cosy.js";
+import {
+  buildAuthHeaders,
+  getMachineId,
+  getQoderChatURL,
+  getQoderCNDirectModel,
+  getQoderMode,
+  getQoderUserEmailFallback,
+  isQoderCNMode,
+} from "./cosy.js";
 import { getCachedModelConfig } from "./models.js";
 import { getCachedCredentials } from "./oauth.js";
 import { qoderEncodeBody } from "./qoder-encoding.js";
@@ -95,20 +103,25 @@ export function streamQoder(
 
   (async () => {
     try {
+      const providerMode = model.provider === "qoder-cn" ? "cn" : getQoderMode();
       const accessToken = options?.apiKey;
       if (!accessToken) {
-        throw new Error("Qoder credentials not set. Run /login qoder or set QODER_PERSONAL_ACCESS_TOKEN.");
+        throw new Error(
+          isQoderCNMode(providerMode)
+            ? "Qoder CN credentials not set. Run /login qoder-cn or set QODERCN_PERSONAL_ACCESS_TOKEN."
+            : "Qoder credentials not set. Run /login qoder or set QODER_PERSONAL_ACCESS_TOKEN.",
+        );
       }
 
       // Resolve user details from cached credentials
-      const cachedCreds = getCachedCredentials(accessToken);
+      const cachedCreds = getCachedCredentials(accessToken, model.provider);
       const userID = cachedCreds?.userID || "qoder-user";
-      const name = cachedCreds?.name || "Qoder User";
-      const email = cachedCreds?.email || "user@qoder.com";
+      const name = cachedCreds?.name || (isQoderCNMode(providerMode) ? "Qoder CN User" : "Qoder User");
+      const email = cachedCreds?.email || getQoderUserEmailFallback(providerMode);
       const machineID = cachedCreds?.machineID || getMachineId();
 
-      const qoderModel = model.id;
-      const modelConfig = getCachedModelConfig(qoderModel) || {
+      const qoderModel = isQoderCNMode(providerMode) ? getQoderCNDirectModel(model.id) : model.id;
+      const modelConfig = getCachedModelConfig(qoderModel, providerMode) || {
         key: qoderModel,
         is_reasoning:
           qoderModel === "ultimate" ||
@@ -205,8 +218,7 @@ export function streamQoder(
       const encodedBody = qoderEncodeBody(bodyBytes);
       const encodedBytes = Buffer.from(encodedBody, "utf8");
 
-      const chatURL =
-        "https://api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1";
+      const chatURL = getQoderChatURL(providerMode);
 
       const headers = buildAuthHeaders(encodedBytes, chatURL, {
         userID,
