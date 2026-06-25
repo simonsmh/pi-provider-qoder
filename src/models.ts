@@ -1,9 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildAuthHeaders } from "./cosy.js";
-
-const CACHE_PATH = join(homedir(), ".pi", "agent", "qoder-models-cache.json");
+import {
+  buildAuthHeaders,
+  getQoderBaseUrl,
+  getQoderCNFriendlyModelInfo,
+  getQoderMode,
+  getQoderModelListURL,
+  isQoderCNMode,
+} from "./cosy.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
@@ -26,7 +31,7 @@ export interface QoderModelDef {
   id: string;
   name: string;
   api: "qoder-api";
-  provider: "qoder";
+  provider: "qoder" | "qoder-cn";
   baseUrl: string;
   reasoning: boolean;
   supportsEffort: boolean;
@@ -34,6 +39,16 @@ export interface QoderModelDef {
   cost: typeof ZERO_COST;
   contextWindow: number;
   maxTokens: number;
+  description?: string;
+}
+
+function getQoderCachePath(mode?: string): string {
+  return join(
+    homedir(),
+    ".pi",
+    "agent",
+    isQoderCNMode(mode) ? "qoder-cn-models-cache.json" : "qoder-models-cache.json",
+  );
 }
 
 export const staticModels: QoderModelDef[] = [
@@ -195,34 +210,195 @@ export const staticModels: QoderModelDef[] = [
   },
 ];
 
-export function getCachedModels(): QoderModelDef[] {
-  if (existsSync(CACHE_PATH)) {
+export const staticCnModels: QoderModelDef[] = [
+  {
+    id: "auto",
+    name: "Auto · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 180000,
+    maxTokens: 32768,
+    description: "Qoder CN smart routing; live catalog reports 180K max input.",
+  },
+  {
+    id: "qwen3.7-max",
+    name: "Qwen 3.7 Max · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    description: "Qoder CN qmodel_latest; context options 200K/400K/1M.",
+  },
+  {
+    id: "qwen3.7-plus",
+    name: "Qwen 3.7 Plus · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    description: "Qoder CN qmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "qwen3.6-flash",
+    name: "Qwen 3.6 Flash · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    description: "Qoder CN q36fmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "deepseek-v4-pro",
+    name: "DeepSeek V4 Pro · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    description: "Qoder CN dmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "deepseek-v4-flash",
+    name: "DeepSeek V4 Flash · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: false,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    description: "Qoder CN dfmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "glm-5.2",
+    name: "GLM 5.2 · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 200000,
+    maxTokens: 32768,
+    description: "Qoder CN gm51model; live catalog currently displays GLM-5.2 with 200K context.",
+  },
+  {
+    id: "kimi-k2.6",
+    name: "Kimi K2.6 · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 256000,
+    maxTokens: 32768,
+    description: "Qoder CN kmodel; context option 256K.",
+  },
+  {
+    id: "minimax-m2.7",
+    name: "MiniMax M2.7 · Qoder CN",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: false,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 200000,
+    maxTokens: 32768,
+    description: "Qoder CN mmodel; live catalog reports 200K context.",
+  },
+];
+
+export function getCachedModels(mode?: string): QoderModelDef[] {
+  const cachePath = getQoderCachePath(mode);
+  if (existsSync(cachePath)) {
     try {
-      const data = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+      const data = JSON.parse(readFileSync(cachePath, "utf8"));
       if (data && Array.isArray(data.models)) {
         return data.models;
       }
     } catch {}
   }
-  return staticModels;
+  return isQoderCNMode(mode) ? staticCnModels : staticModels;
 }
 
-export function getCachedModelConfig(modelKey: string): QoderModelEntry | null {
-  if (existsSync(CACHE_PATH)) {
+export function getCachedModelConfig(modelKey: string, mode?: string): QoderModelEntry | null {
+  const cachePath = getQoderCachePath(mode);
+  if (existsSync(cachePath)) {
     try {
-      const data = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+      const data = JSON.parse(readFileSync(cachePath, "utf8"));
       if (data?.configs?.[modelKey]) {
         return data.configs[modelKey] as QoderModelEntry;
       }
     } catch {}
   }
+
+  if (isQoderCNMode(mode)) {
+    const reasoningModels = new Set([
+      "qoder-cn",
+      "auto",
+      "qmodel_latest",
+      "qmodel",
+      "q36fmodel",
+      "qfmodel",
+      "dmodel",
+      "gm51model",
+      "kmodel",
+      "qwen3.7-max",
+      "qwen3.7-plus",
+      "qwen3.6-plus",
+      "qwen3.6-flash",
+      "deepseek-v4-pro",
+      "glm-5.2",
+      "glm-5.1",
+      "kimi-k2.6",
+    ]);
+    return {
+      key: modelKey,
+      is_reasoning: reasoningModels.has(modelKey),
+      max_output_tokens: 32768,
+      source: "system",
+    };
+  }
+
   return null;
 }
 
-export function isCacheStale(): boolean {
-  if (!existsSync(CACHE_PATH)) return true;
+export function isCacheStale(mode?: string): boolean {
+  const cachePath = getQoderCachePath(mode);
+  if (!existsSync(cachePath)) return true;
   try {
-    const data = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    const data = JSON.parse(readFileSync(cachePath, "utf8"));
     if (!data || typeof data.updatedAt !== "number") return true;
     // Stale if older than 1 hour
     return Date.now() - data.updatedAt > 3600_000;
@@ -236,8 +412,9 @@ export async function updateQoderModelsCache(
   userID: string,
   name: string,
   email: string,
+  mode: string = getQoderMode(),
 ): Promise<void> {
-  const modelListURL = "https://api3.qoder.sh/algo/api/v2/model/list";
+  const modelListURL = getQoderModelListURL(mode);
   try {
     const headers = buildAuthHeaders(null, modelListURL, {
       userID,
@@ -284,15 +461,17 @@ export async function updateQoderModelsCache(
       const isVL = !!entry.is_vl;
       const isReasoning = !!entry.is_reasoning || !!entry.thinking_config;
       const supportsEffort = !!entry.thinking_config?.enabled?.efforts;
+      const modelInfo = isQoderCNMode(mode) ? getQoderCNFriendlyModelInfo(key, display) : { id: key, name: display };
 
       configs[key] = entry;
+      if (modelInfo.id !== key) configs[modelInfo.id] = entry;
 
       newModels.push({
-        id: key,
-        name: display,
+        id: modelInfo.id,
+        name: modelInfo.name,
         api: "qoder-api",
-        provider: "qoder",
-        baseUrl: "https://api3.qoder.sh/",
+        provider: isQoderCNMode(mode) ? "qoder-cn" : "qoder",
+        baseUrl: getQoderBaseUrl(mode),
         reasoning: isReasoning,
         supportsEffort,
         input: isVL ? ["text", "image"] : ["text"],
@@ -308,10 +487,10 @@ export async function updateQoderModelsCache(
     if (!newModels.some((m) => m.id === "auto")) {
       newModels.unshift({
         id: "auto",
-        name: "Qoder Auto",
+        name: isQoderCNMode(mode) ? "Auto · Qoder CN" : "Qoder Auto",
         api: "qoder-api",
-        provider: "qoder",
-        baseUrl: "https://api3.qoder.sh/",
+        provider: isQoderCNMode(mode) ? "qoder-cn" : "qoder",
+        baseUrl: getQoderBaseUrl(mode),
         reasoning: true,
         supportsEffort: false,
         input: ["text", "image"],
@@ -327,7 +506,8 @@ export async function updateQoderModelsCache(
       configs,
     };
 
-    mkdirSync(dirname(CACHE_PATH), { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify(cacheData, null, 2), "utf-8");
+    const cachePath = getQoderCachePath(mode);
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), "utf-8");
   } catch {}
 }
