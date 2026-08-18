@@ -102,7 +102,7 @@ export async function exchangeJobToken(pat: string, mode: string = getQoderMode(
 }
 
 /** Fetch user profile using a job token (jt-...). Best-effort. */
-async function fetchUserInfo(jobToken: string, mode: string): Promise<{ userID: string; email: string; name: string }> {
+export async function fetchUserInfo(jobToken: string, mode: string): Promise<{ userID: string; email: string; name: string }> {
   let userID = "";
   let email = "";
   let name = "";

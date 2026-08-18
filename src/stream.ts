@@ -21,7 +21,7 @@ import {
   isQoderCNMode,
 } from "./cosy.js";
 import { getCachedModelConfig } from "./models.js";
-import { getCachedCredentials } from "./oauth.js";
+import { resolveQoderIdentity } from "./oauth.js";
 import { qoderEncodeBody } from "./qoder-encoding.js";
 import { stripThinkingTags, ThinkingTagParser } from "./thinking-parser.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
@@ -74,6 +74,21 @@ function stableChatRecordID(
   return hash.digest("hex").slice(0, 16);
 }
 
+
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) return (part as { text: string }).text;
+        return "";
+      })
+      .join("\n");
+  }
+  return "";
+}
+
 export function streamQoder(
   model: Model<Api>,
   context: Context,
@@ -113,12 +128,15 @@ export function streamQoder(
         );
       }
 
-      // Resolve user details from cached credentials
-      const cachedCreds = getCachedCredentials(accessToken, model.provider);
-      const userID = cachedCreds?.userID || "qoder-user";
-      const name = cachedCreds?.name || (isQoderCNMode(providerMode) ? "Qoder CN User" : "Qoder User");
-      const email = cachedCreds?.email || getQoderUserEmailFallback(providerMode);
-      const machineID = cachedCreds?.machineID || getMachineId();
+      // Resolve the real Qoder identity from the job token. OMP keeps login
+      // credentials in its own agent.db, not in ~/.pi/agent/auth.json, so a
+      // cache miss would otherwise send uid "qoder-user" and Qoder CN rejects
+      // it with "Login expired" (105).
+      const ident = await resolveQoderIdentity(accessToken, model.provider, providerMode);
+      const userID = ident.userID || "qoder-user";
+      const name = ident.name || (isQoderCNMode(providerMode) ? "Qoder CN User" : "Qoder User");
+      const email = ident.email || getQoderUserEmailFallback(providerMode);
+      const machineID = ident.machineID || getMachineId();
 
       const qoderModel = isQoderCNMode(providerMode) ? getQoderCNDirectModel(model.id) : model.id;
       const modelConfig = getCachedModelConfig(qoderModel, providerMode) || {
@@ -137,7 +155,10 @@ export function streamQoder(
       const maxOutputTokens = modelConfig.max_output_tokens || 32768;
 
       const normalizedMessages = transformMessagesForQoder(context.messages);
-      const systemText = context.systemPrompt || "";
+      // OMP may supply the system prompt as a single-element content array;
+      // Qoder MessagesInputDto#content is a String and rejects an array with
+      // "Execution failed: set property ... MessagesInputDto#content". Normalize.
+      const systemText = contentToText(context.systemPrompt || "");
 
       let lastUserText = "";
       for (let i = normalizedMessages.length - 1; i >= 0; i--) {
@@ -238,6 +259,7 @@ export function streamQoder(
       });
 
       const modelSource = modelConfig.source || "system";
+
 
       const response = await fetch(chatURL, {
         method: "POST",

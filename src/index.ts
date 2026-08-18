@@ -45,10 +45,11 @@ function createQoderOAuth(providerID: string, mode: string): OAuthConfigWithUsag
     login: isQoderCNMode(mode) ? loginQoderCN : loginQoder,
     refreshToken: isQoderCNMode(mode) ? refreshQoderTokenCN : refreshQoderToken,
     getApiKey: (cred: OAuthCredentials) => cred.access,
-    modifyModels: (models: Model<Api>[], _cred: OAuthCredentials) => {
-      const nonQoder = models.filter((m: Model<Api>) => m.provider !== providerID);
-      return [...nonQoder, ...modelsForProvider(mode, providerID)];
-    },
+    // NOTE: no `modifyModels` hook on purpose. OMP (Bun) does a whole-catalog
+    // structuredClone before invoking it, and its bundled catalog contains a
+    // model with a non-cloneable property -> "The object can not be cloned."
+    // removes qoder from `omp models`. Models are supplied at registration
+    // via `modelsForProvider` and refreshed by the startup/session cache hooks.
     fetchUsage: isQoderCNMode(mode) ? fetchQoderUsageCN : fetchQoderUsage,
   };
 }
