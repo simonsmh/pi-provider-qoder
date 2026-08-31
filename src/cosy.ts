@@ -12,7 +12,7 @@ XcW+ML9FoCI6AOvOzwIDAQAB
 
 // Keep the COSY client identity aligned with the current Qoder CLI catalog
 // protocol. Older values cause the model endpoint to return a reduced list.
-const QoderIDEVersion = "1.1.3";
+const QoderIDEVersion = "1.1.38";
 const QoderClientType = "5";
 const QoderDataPolicy = "disagree";
 const QoderLoginVersion = "v2";
