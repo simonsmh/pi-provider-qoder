@@ -9,9 +9,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classify, type RecorderStage as Stage } from "./live-fixture-recorder.js";
 
 type Region = "global" | "cn";
-type Stage = "patExchange" | "userinfo" | "modelList" | "chat";
 
 interface RecordedInteraction {
   request: {
@@ -26,6 +26,41 @@ interface RecordedInteraction {
     body: unknown;
   };
 }
+
+// These tables are used by fetch interception during recordRegion(). Keep them
+// initialized before the top-level recording awaits begin.
+const retainedHeaders = new Set([
+  "accept",
+  "content-type",
+  "user-agent",
+  "cosy-version",
+  "cosy-clienttype",
+  "x-model-key",
+  "x-model-source",
+]);
+
+const sensitiveKeys = new Set([
+  "token",
+  "access_token",
+  "refresh_token",
+  "job_token",
+  "job_refresh_token",
+  "security_oauth_token",
+  "personal_token",
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "user_id",
+  "userid",
+  "uid",
+  "machine_id",
+  "machineid",
+  "request_id",
+  "requestid",
+  "request_set_id",
+  "chat_record_id",
+  "session_id",
+]);
 
 const regions = parseRegions(process.argv.slice(2));
 const pats = new Map<Region, string>();
@@ -102,7 +137,7 @@ async function recordRegion(region: Region, pat: string): Promise<void> {
   }) as typeof fetch;
 
   const { credentialsFromPat } = await import("../src/pat.js");
-  const { getCachedModels, updateQoderModelsCache } = await import("../src/models.js");
+  const { getCachedModelConfig, getCachedModels, updateQoderModelsCache } = await import("../src/models.js");
   const { streamQoder } = await import("../src/stream.js");
 
   const credentials = (await credentialsFromPat(pat, region)) as unknown as {
@@ -125,7 +160,10 @@ async function recordRegion(region: Region, pat: string): Promise<void> {
 
   await updateQoderModelsCache(credentials.access, credentials.userID, credentials.name, credentials.email, region);
   const models = getCachedModels(region);
-  const model = models.find((candidate) => (region === "global" ? candidate.id === "lite" : true));
+  const model =
+    region === "global"
+      ? models.find((candidate) => getCachedModelConfig(candidate.id, region)?.key === "lite")
+      : models[0];
   if (!model) throw new Error(`[live] ${region}: model catalog returned no enabled model`);
 
   const events: Array<{
@@ -197,14 +235,6 @@ async function readResponseText(response: Response, stage: Stage): Promise<strin
   }
 }
 
-function classify(url: string): Stage {
-  if (url.includes("/jobToken/exchange")) return "patExchange";
-  if (url.includes("/userinfo")) return "userinfo";
-  if (url.includes("/model/list")) return "modelList";
-  if (url.includes("/chat")) return "chat";
-  throw new Error(`[live] refusing to record unexpected endpoint: ${new URL(url).pathname}`);
-}
-
 function recordRequest(input: string | URL | Request, init: RequestInit | undefined, stage: Stage) {
   const url = typeof input === "string" || input instanceof URL ? input.toString() : input.url;
   const method = init?.method || (input instanceof Request ? input.method : "GET");
@@ -226,16 +256,6 @@ function recordRequest(input: string | URL | Request, init: RequestInit | undefi
   }
   return { method, url, headers: recordHeaders(headers), body };
 }
-
-const retainedHeaders = new Set([
-  "accept",
-  "content-type",
-  "user-agent",
-  "cosy-version",
-  "cosy-clienttype",
-  "x-model-key",
-  "x-model-source",
-]);
 
 function recordHeaders(headers: Headers): Record<string, string> {
   return Object.fromEntries(
@@ -295,29 +315,6 @@ function redactSse(text: string): string {
     })
     .join("\n");
 }
-
-const sensitiveKeys = new Set([
-  "token",
-  "access_token",
-  "refresh_token",
-  "job_token",
-  "job_refresh_token",
-  "security_oauth_token",
-  "personal_token",
-  "authorization",
-  "cookie",
-  "set-cookie",
-  "user_id",
-  "userid",
-  "uid",
-  "machine_id",
-  "machineid",
-  "request_id",
-  "requestid",
-  "request_set_id",
-  "chat_record_id",
-  "session_id",
-]);
 
 function redactValue(value: unknown, key = ""): unknown {
   const normalizedKey = key.toLowerCase();
