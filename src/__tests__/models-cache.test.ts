@@ -71,4 +71,47 @@ describe("Qoder model cache", () => {
 
     expect(getCachedModels("global").map((model) => model.id)).toEqual(["ultimate"]);
   });
+
+  it("records a 1M context window when the catalog omits context_config", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            chat: [{ key: "lite", enable: true, display_name: "Lite", max_input_tokens: 180000 }],
+          }),
+      }),
+    );
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    expect(cache.models[0].contextWindow).toBe(1_000_000);
+  });
+
+  it("records the advertised context_config max, even when it is below 1M", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            chat: [
+              {
+                key: "gm51model",
+                enable: true,
+                display_name: "GLM 5.2",
+                context_config: { default: { token_count: 200000, is_default: true } },
+              },
+            ],
+          }),
+      }),
+    );
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    expect(cache.models[0].contextWindow).toBe(200000);
+  });
 });

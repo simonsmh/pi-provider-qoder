@@ -26,6 +26,16 @@ export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cach
  */
 export const MAX_OUTPUT_TOKENS = 131072;
 
+/**
+ * Fallback context window when the catalog omits `context_config`.
+ *
+ * Qoder's `/model/list` often ships `max_input_tokens` as a stale 180K floor
+ * even for models that accept 1M-token prompts (verified against global `lite`
+ * through 1,000K tokens). When `context_config` is present we use its largest
+ * `token_count` instead, so models that truly advertise 200K/256K stay there.
+ */
+export const DEFAULT_CONTEXT_WINDOW = 1000000;
+
 /** Shape of a single entry returned by the Qoder /model/list endpoint. */
 export interface QoderModelEntry {
   key?: string;
@@ -79,7 +89,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 180000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -92,7 +102,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -105,7 +115,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -118,7 +128,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 180000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -131,7 +141,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
-    contextWindow: 180000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -144,7 +154,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -157,7 +167,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -170,7 +180,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -183,7 +193,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -196,7 +206,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -209,7 +219,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -222,7 +232,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: true,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -235,6 +245,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
+    // Catalog advertises 256K; not included in the 1M live test in issue #13.
     contextWindow: 256000,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
@@ -248,7 +259,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
@@ -261,7 +272,7 @@ export const staticModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
   },
 ];
@@ -277,6 +288,8 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
+    // CN Auto has not been live-tested at 1M; keep the conservative 200K
+    // fallback until the CN catalog advertises a larger option.
     contextWindow: 200000,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN smart routing; fallback context window of 200K.",
@@ -291,7 +304,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN qmodel_latest; context options 200K/400K/1M.",
   },
@@ -305,7 +318,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN qmodel; context options 200K/400K/1M.",
   },
@@ -319,7 +332,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN q36fmodel; context options 200K/400K/1M.",
   },
@@ -333,7 +346,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN dmodel; context options 200K/400K/1M.",
   },
@@ -347,7 +360,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
-    contextWindow: 1000000,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN dfmodel; context options 200K/400K/1M.",
   },
@@ -361,6 +374,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
+    // Live CN catalog currently displays 200K; do not copy global gm51model's 1M.
     contextWindow: 200000,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN gm51model; live catalog currently displays GLM-5.2 with 200K context.",
@@ -375,6 +389,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text", "image"],
     cost: ZERO_COST,
+    // Catalog advertises 256K; same as global kmodel.
     contextWindow: 256000,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN kmodel; context option 256K.",
@@ -389,6 +404,7 @@ export const staticCnModels: QoderModelDef[] = [
     supportsEffort: false,
     input: ["text"],
     cost: ZERO_COST,
+    // Live CN catalog reports 200K; not confirmed at 1M.
     contextWindow: 200000,
     maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN mmodel; live catalog reports 200K context.",
@@ -485,6 +501,21 @@ export function getCachedModelConfig(modelKey: string, mode?: string): QoderMode
   return null;
 }
 
+/** Resolve contextWindow from a catalog entry. Exported for tests. */
+export function contextWindowFromCatalog(entry: QoderModelEntry): number {
+  const contextConfig = entry.context_config;
+  if (contextConfig && typeof contextConfig === "object") {
+    let advertised = 0;
+    for (const configVal of Object.values(contextConfig)) {
+      if (configVal && typeof configVal === "object" && typeof configVal.token_count === "number") {
+        if (configVal.token_count > advertised) advertised = configVal.token_count;
+      }
+    }
+    if (advertised > 0) return advertised;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
+}
+
 /** Prefer the largest context option when Qoder exposes selectable contexts. */
 function withMaxContextAsDefault(entry: QoderModelEntry): QoderModelEntry {
   const contextConfig = entry.context_config;
@@ -559,21 +590,12 @@ export async function updateQoderModelsCache(
       if (!key || !entry.enable) continue;
 
       const display = entry.display_name || key;
-      // The context window is the largest selectable context option the upstream
-      // catalog exposes (e.g. 1M when 200K/400K/1M are offered). Fall back to
-      // 200K when no context_config is present. `max_input_tokens` is not used:
-      // it is a flat base value (180K) that every catalog entry with selectable
-      // contexts already exceeds, so it only ever acted as a redundant floor.
-      let ctxLen = 200000;
-      if (entry.context_config && typeof entry.context_config === "object") {
-        for (const configVal of Object.values(entry.context_config)) {
-          if (configVal && typeof configVal === "object" && typeof configVal.token_count === "number") {
-            if (configVal.token_count > ctxLen) {
-              ctxLen = configVal.token_count;
-            }
-          }
-        }
-      }
+      // Prefer the largest selectable context option the catalog advertises
+      // (e.g. 1M when 200K/400K/1M are offered). If none is advertised, use
+      // DEFAULT_CONTEXT_WINDOW rather than the stale 180K `max_input_tokens`
+      // floor. Do not seed from DEFAULT_CONTEXT_WINDOW before scanning
+      // context_config: that would inflate models that only advertise 200K.
+      const ctxLen = contextWindowFromCatalog(entry);
       const isVL = !!entry.is_vl;
       const isReasoning = !!entry.is_reasoning || !!entry.thinking_config;
       const supportsEffort = !!entry.thinking_config?.enabled?.efforts;

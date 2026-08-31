@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { staticCnModels, staticModels, ZERO_COST } from "../models.js";
+import {
+  contextWindowFromCatalog,
+  DEFAULT_CONTEXT_WINDOW,
+  staticCnModels,
+  staticModels,
+  ZERO_COST,
+} from "../models.js";
 
 // ── staticModels ──────────────────────────────────────────────────────────
 
@@ -32,6 +38,21 @@ describe("staticModels", () => {
   it("has unique IDs", () => {
     const ids = staticModels.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("uses a 1M context window for models confirmed to support it", () => {
+    // Global lite was live-tested through 1,000K tokens (issue #13). auto,
+    // efficient, and gm51model share the same Qoder 1M catalog family.
+    for (const id of ["auto", "efficient", "lite", "gm51model"]) {
+      const model = staticModels.find((m) => m.id === id);
+      expect(model, id).toBeDefined();
+      expect(model?.contextWindow).toBe(DEFAULT_CONTEXT_WINDOW);
+      expect(model?.contextWindow).toBe(1_000_000);
+    }
+  });
+
+  it("keeps kmodel at the catalog-advertised 256K window", () => {
+    expect(staticModels.find((m) => m.id === "kmodel")?.contextWindow).toBe(256000);
   });
 });
 
@@ -72,6 +93,38 @@ describe("staticCnModels", () => {
     for (const m of staticCnModels) {
       expect(m.description).toBeTruthy();
     }
+  });
+
+  it("does not copy global 1M onto CN models whose live catalog is smaller", () => {
+    expect(staticCnModels.find((m) => m.id === "Auto")?.contextWindow).toBe(200000);
+    expect(staticCnModels.find((m) => m.id === "GLM-5.2")?.contextWindow).toBe(200000);
+    expect(staticCnModels.find((m) => m.id === "MiniMax-M2.7")?.contextWindow).toBe(200000);
+    expect(staticCnModels.find((m) => m.id === "Kimi-K2.7-Code")?.contextWindow).toBe(256000);
+  });
+});
+
+describe("contextWindowFromCatalog", () => {
+  it("uses the largest advertised context_config token_count", () => {
+    expect(
+      contextWindowFromCatalog({
+        context_config: {
+          small: { token_count: 200000 },
+          large: { token_count: 1000000, is_default: true },
+        },
+      }),
+    ).toBe(1000000);
+  });
+
+  it("keeps an advertised 200K window instead of the 1M fallback", () => {
+    expect(
+      contextWindowFromCatalog({
+        context_config: { default: { token_count: 200000, is_default: true } },
+      }),
+    ).toBe(200000);
+  });
+
+  it("falls back to 1M when the catalog omits context_config", () => {
+    expect(contextWindowFromCatalog({ key: "lite", max_input_tokens: 180000 })).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 });
 

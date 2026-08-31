@@ -111,6 +111,11 @@ Exposes the backing model keys returned by Qoder, including:
   - `kmodel_latest` (Kimi K3)
   - `mmodel` (MiniMax M3)
 
+Global models default to a 1M context window, matching the Qoder API (verified
+against `lite` with prompts up to 1,000K tokens). `kmodel` stays at the 256K its
+catalog entry advertises. Once you log in, the live `/model/list` catalog
+overrides these fallbacks with the largest context option each model exposes.
+
 ### China `qoder-cn`
 
 The China provider exposes friendly model IDs and maps them back to Qoder CN's
@@ -118,7 +123,7 @@ internal keys at request time:
 
 | Friendly ID | Qoder CN key | Context | Images | Reasoning |
 | --- | --- | ---: | :---: | :---: |
-| `auto` | `auto` | 180K | ✅ | ✅ |
+| `auto` | `auto` | 200K | ✅ | ✅ |
 | `qwen3.7-max` | `qmodel_latest` | 1M | ✅ | ✅ |
 | `qwen3.7-plus` | `qmodel` | 1M | ❌ | ✅ |
 | `qwen3.6-flash` | `q36fmodel` | 1M | ❌ | ✅ |
