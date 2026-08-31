@@ -21,6 +21,21 @@ afterEach(() => {
   vi.resetModules();
 });
 
+function liteModel(provider: "qoder" | "qoder-cn") {
+  return {
+    id: "Lite",
+    name: "Lite",
+    api: "qoder-api",
+    provider,
+    baseUrl: provider === "qoder-cn" ? "https://gateway.qoder.com.cn/" : "https://api3.qoder.sh/",
+    reasoning: false,
+    input: ["text"] as const,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 131072,
+  };
+}
+
 describe("provider region binding", () => {
   it("binds qoder to global and qoder-cn to CN", async () => {
     for (const name of patEnvNames) delete process.env[name];
@@ -66,5 +81,52 @@ describe("provider region binding", () => {
 
     await cnOAuth.fetchUsage(credentials);
     expect(fetchMock).toHaveBeenLastCalledWith("https://openapi.qoder.com.cn/api/v2/quota/usage", expect.any(Object));
+  });
+});
+
+describe("qoder-api registry", () => {
+  it("registers qoder-api so global streamSimple works for both regions", async () => {
+    for (const name of patEnvNames) delete process.env[name];
+
+    // Import compat and the extension in the same test. afterEach resetModules
+    // would otherwise give them separate copies of the API registry Map.
+    const { getApiProvider, streamSimple, unregisterApiProviders } = await import("@earendil-works/pi-ai/compat");
+    const { default: registerProviders } = await import("../index.js");
+    // Node caches node_modules ESM, so a prior test in this file may already
+    // have registered qoder-api. Drop that entry before asserting the empty state.
+    unregisterApiProviders("provider:qoder");
+    const emptyContext = { systemPrompt: "", messages: [] };
+
+    expect(getApiProvider("qoder-api")).toBeUndefined();
+    expect(() => streamSimple(liteModel("qoder") as never, emptyContext)).toThrow(
+      /No API provider registered for api: qoder-api/,
+    );
+
+    const providers = new Map<string, Record<string, unknown>>();
+    const registerProvider = vi.fn((providerID: string, config: Record<string, unknown>) => {
+      providers.set(providerID, config);
+    });
+    const pi = {
+      registerProvider,
+      on: vi.fn(),
+    };
+
+    await registerProviders(pi as never);
+
+    expect(registerProvider).toHaveBeenCalledTimes(2);
+    expect(providers.has("qoder")).toBe(true);
+    expect(providers.has("qoder-cn")).toBe(true);
+    expect(providers.get("qoder")?.api).toBe("qoder-api");
+    expect(providers.get("qoder-cn")?.api).toBe("qoder-api");
+    expect(typeof providers.get("qoder")?.streamSimple).toBe("function");
+    expect(typeof providers.get("qoder-cn")?.streamSimple).toBe("function");
+
+    expect(getApiProvider("qoder-api")).toBeDefined();
+    expect(() => streamSimple(liteModel("qoder") as never, emptyContext)).not.toThrow(
+      /No API provider registered for api: qoder-api/,
+    );
+    expect(() => streamSimple(liteModel("qoder-cn") as never, emptyContext)).not.toThrow(
+      /No API provider registered for api: qoder-api/,
+    );
   });
 });

@@ -82,6 +82,7 @@ describe("staticCnModels", () => {
       expect(m.id).toBeTruthy();
       expect(m.name).toBeTruthy();
       expect(m.api).toBe("qoder-api");
+      expect(m.api).not.toBe("qoder-cn-api");
       expect(m.provider).toBe("qoder-cn");
       expect(m.baseUrl).toContain("qoder.com.cn");
       expect(typeof m.reasoning).toBe("boolean");

@@ -1,4 +1,5 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
+import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import {
   autoLoginQoderFromEnvironment,
@@ -16,6 +17,19 @@ import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } fr
 type OAuthConfigWithUsage = NonNullable<ProviderConfig["oauth"]> & {
   fetchUsage: (credentials: OAuthCredentials) => Promise<unknown>;
 };
+
+const QODER_API = "qoder-api" as Api;
+
+function registerQoderApi(): void {
+  registerApiProvider(
+    {
+      api: QODER_API,
+      stream: streamQoder,
+      streamSimple: streamQoder,
+    },
+    "provider:qoder",
+  );
+}
 
 function modelsForProvider(mode: QoderMode, providerID: string): Model<Api>[] {
   const cached = getCachedModels(mode);
@@ -49,7 +63,7 @@ function registerQoderProvider(pi: ExtensionAPI, mode: QoderMode): void {
   const oauth = createQoderOAuth(mode);
   pi.registerProvider(providerID, {
     baseUrl: getQoderBaseUrl(mode),
-    api: "qoder-api" as Api,
+    api: QODER_API,
     models: modelsForProvider(mode, providerID) as unknown as ProviderConfig["models"],
     oauth: oauth as ProviderConfig["oauth"],
     // pi-coding-agent resolves its own nested @earendil-works/pi-ai copy, so the
@@ -76,6 +90,8 @@ async function refreshModelsAtStartup(mode: QoderMode): Promise<void> {
 }
 
 export default async function (pi: ExtensionAPI) {
+  registerQoderApi();
+
   for (const mode of QODER_MODES) {
     const providerID = getQoderRegionConfig(mode).providerID;
     try {
