@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import { getMachineId, getQoderMode, getQoderRefreshURL, getQoderUserEmailFallback, isQoderCNMode } from "./cosy.js";
 import { interactiveLogin } from "./login.js";
 import { updateQoderModelsCache } from "./models.js";
@@ -16,6 +16,17 @@ export interface QoderCredentials extends OAuthCredentials {
 }
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
+
+/**
+ * `AuthStorage` is not part of every pi-coding-agent release's public exports,
+ * so it is read off the module namespace instead of imported by name: a missing
+ * export must degrade to the auth-file fallback below, not break the build.
+ */
+const AuthStorage = (
+  PiCodingAgent as unknown as {
+    AuthStorage?: { create?: () => { set: (providerID: string, credentials: unknown) => void } };
+  }
+).AuthStorage;
 
 /** Return the PAT exposed through the environment for a provider mode. */
 export function getQoderPatForMode(mode: string): string {
@@ -55,7 +66,7 @@ export async function autoLoginQoderFromEnvironment(providerID: string, mode: st
   // account's credentials.
   const credentials = await credentialsFromPat(pat, mode);
 
-  if (typeof AuthStorage !== "undefined" && typeof AuthStorage?.create === "function") {
+  if (typeof AuthStorage?.create === "function") {
     try {
       const authStorage = AuthStorage.create();
       authStorage.set(providerID, { type: "oauth", ...credentials });
