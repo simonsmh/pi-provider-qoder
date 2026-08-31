@@ -11,6 +11,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src"],
+  "include": ["src", "scripts/record-live-fixtures.ts"],
   "exclude": ["node_modules", "dist", "test"]
 }

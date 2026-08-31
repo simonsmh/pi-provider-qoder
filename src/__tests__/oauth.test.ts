@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { updateQoderModelsCache } from "../models.js";
 import { autoLoginQoderFromEnvironment, getCachedCredentials, getQoderPatForMode } from "../oauth.js";
 import { credentialsFromPat } from "../pat.js";
+import { loadLiveFixture } from "./live-fixture.js";
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
 
@@ -84,6 +85,35 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
       "mock-user-123",
       "Test User",
       "test@example.com",
+      "global",
+    );
+  });
+
+  it("passes a recorded-format identity into the model catalog refresh", async () => {
+    const identity = loadLiveFixture("global").interactions.userinfo.response.body as {
+      id: string;
+      email: string;
+      name: string;
+    };
+    vi.mocked(credentialsFromPat).mockResolvedValueOnce({
+      access: "<redacted:job-token>",
+      refresh: "<redacted:refresh-token>",
+      expires: Date.now() + 3600000,
+      userID: identity.id,
+      email: identity.email,
+      name: identity.name,
+      machineID: "<redacted:machine-id>",
+      type: "oauth",
+    } as never);
+    process.env.QODER_PAT = "test-only-pat";
+
+    await autoLoginQoderFromEnvironment("qoder-fixture-provider", "global");
+
+    expect(updateQoderModelsCache).toHaveBeenCalledWith(
+      "<redacted:job-token>",
+      identity.id,
+      identity.name,
+      identity.email,
       "global",
     );
   });

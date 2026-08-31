@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCachedModels, updateQoderModelsCache } from "../models.js";
+import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
 const CACHE_PATH = join(homedir(), ".pi", "agent", "qoder-models-cache.json");
 let originalCache: string | undefined;
@@ -19,6 +20,17 @@ afterEach(() => {
 });
 
 describe("Qoder model cache", () => {
+  it("replays the recorded-format model-list schema", async () => {
+    const interaction = loadLiveFixture("global").interactions.modelList;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["lite", "gm51model"]);
+    expect(cache.models.map((model: { contextWindow: number }) => model.contextWindow)).toEqual([1_000_000, 200_000]);
+  });
+
   it("keeps only enabled service models without adding auto as a fallback", async () => {
     vi.stubGlobal(
       "fetch",

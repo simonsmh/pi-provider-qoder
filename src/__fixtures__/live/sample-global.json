@@ -1,0 +1,125 @@
+{
+  "formatVersion": 1,
+  "source": "sample",
+  "region": "global",
+  "recordedAt": null,
+  "interactions": {
+    "patExchange": {
+      "request": {
+        "method": "POST",
+        "url": "https://openapi.qoder.sh/api/v1/jobToken/exchange",
+        "headers": {
+          "content-type": "application/json",
+          "cosy-version": "1.0.1",
+          "cosy-clienttype": "5"
+        },
+        "body": {
+          "personal_token": "<redacted:pat>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "<redacted:job-token>",
+          "refresh_token": "<redacted:refresh-token>",
+          "expires_in": 86400000
+        }
+      }
+    },
+    "userinfo": {
+      "request": {
+        "method": "GET",
+        "url": "https://openapi.qoder.sh/api/v1/userinfo",
+        "headers": {
+          "accept": "application/json",
+          "cosy-version": "1.0.1",
+          "cosy-clienttype": "5"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "<redacted:user-id>",
+          "email": "<redacted:email>",
+          "name": "<redacted:name>"
+        }
+      }
+    },
+    "modelList": {
+      "request": {
+        "method": "GET",
+        "url": "https://api3.qoder.sh/algo/api/v2/model/list",
+        "headers": {
+          "accept": "application/json",
+          "cosy-version": "1.1.38",
+          "cosy-clienttype": "5"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "chat": [
+            {
+              "key": "lite",
+              "enable": true,
+              "display_name": "Lite",
+              "max_input_tokens": 180000,
+              "is_reasoning": false,
+              "source": "system"
+            },
+            {
+              "key": "gm51model",
+              "enable": true,
+              "display_name": "GLM 5.2",
+              "context_config": {
+                "default": {
+                  "token_count": 200000,
+                  "is_default": true
+                }
+              },
+              "is_reasoning": true,
+              "source": "system"
+            }
+          ]
+        }
+      }
+    },
+    "chat": {
+      "request": {
+        "method": "POST",
+        "url": "https://api3.qoder.sh/algo/api/v2/chat",
+        "headers": {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+          "cosy-version": "1.1.38",
+          "cosy-clienttype": "5",
+          "x-model-key": "lite",
+          "x-model-source": "system"
+        },
+        "body": {
+          "encoding": "qoder-waf",
+          "byteLength": 512,
+          "value": "<redacted:encoded-request-body>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "body": "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1,\\\"id\\\":\\\"<redacted:request-id>\\\",\\\"model\\\":\\\"lite\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}\n\ndata:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\",\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1,\\\"id\\\":\\\"<redacted:request-id>\\\",\\\"model\\\":\\\"lite\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}\n\ndata:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"finish_reason\\\":\\\"stop\\\",\\\"index\\\":0}],\\\"created\\\":1,\\\"id\\\":\\\"<redacted:request-id>\\\",\\\"model\\\":\\\"lite\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"usage\\\":{\\\"completion_tokens\\\":1,\\\"prompt_tokens\\\":10,\\\"total_tokens\\\":11}}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}\n\ndata:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"[DONE]\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}\n\n"
+      }
+    }
+  }
+}

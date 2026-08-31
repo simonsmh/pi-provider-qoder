@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamQoder } from "../stream.js";
+import { loadLiveFixture } from "./live-fixture.js";
 
 // Pin the identity so the mocked fetch below only ever serves the chat request.
 // Without a resolved identity, streamQoder fetches /userinfo first and consumes
@@ -76,12 +77,7 @@ function finishChunk(finish_reason: string, extra: object = {}): object {
   };
 }
 
-const SUCCESS_SSE =
-  sseEnvelope(chunk({ role: "assistant" })) +
-  sseEnvelope(chunk({ reasoning_content: "The user wants OK.", role: "assistant" })) +
-  sseEnvelope(chunk({ content: "OK", role: "assistant" })) +
-  sseEnvelope(finishChunk("stop")) +
-  DONE_SSE;
+const SUCCESS_SSE = loadLiveFixture("global").interactions.chat.response.body as string;
 
 const BLOCKED_SSE = sseEnvelope(
   { code: "provider_error", message: "Session blocked", request_id: "r", type: "provider_error" },
@@ -125,7 +121,7 @@ describe("streamQoder", () => {
     vi.restoreAllMocks();
   });
 
-  it("parses a successful SSE stream into text + stop", async () => {
+  it("replays a recorded-format SSE fixture into text + stop", async () => {
     globalThis.fetch = mockFetch(SUCCESS_SSE);
     const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
     const events = await consume(stream);

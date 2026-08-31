@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { decodePatRefresh, encodePatRefresh, isPatRefresh, PAT_REFRESH_PREFIX } from "../pat.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  decodePatRefresh,
+  encodePatRefresh,
+  exchangeJobToken,
+  fetchUserInfo,
+  isPatRefresh,
+  PAT_REFRESH_PREFIX,
+} from "../pat.js";
+import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ── isPatRefresh ──────────────────────────────────────────────────────────
 
@@ -65,5 +77,41 @@ describe("encodePatRefresh / decodePatRefresh roundtrip", () => {
 describe("PAT_REFRESH_PREFIX", () => {
   it('is "pat"', () => {
     expect(PAT_REFRESH_PREFIX).toBe("pat");
+  });
+});
+
+describe("recorded-format PAT protocol fixtures", () => {
+  const fixture = loadLiveFixture("global");
+
+  it("replays PAT exchange response shape", async () => {
+    const interaction = fixture.interactions.patExchange;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));
+
+    const result = await exchangeJobToken("test-pat", "global");
+
+    expect(result.jobToken).toBe("<redacted:job-token>");
+    expect(result.jobRefreshToken).toBe("<redacted:refresh-token>");
+    expect(result.expiresAt).toBeGreaterThan(Date.now());
+    expect(fetch).toHaveBeenCalledWith(
+      interaction.request.url,
+      expect.objectContaining({
+        method: interaction.request.method,
+        headers: expect.objectContaining({
+          "Cosy-Version": interaction.request.headers["cosy-version"],
+        }),
+      }),
+    );
+  });
+
+  it("replays userinfo response shape", async () => {
+    const interaction = fixture.interactions.userinfo;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));
+    const body = interaction.response.body as { id: string; email: string; name: string };
+
+    await expect(fetchUserInfo("test-job-token", "global")).resolves.toEqual({
+      userID: body.id,
+      email: body.email,
+      name: body.name,
+    });
   });
 });

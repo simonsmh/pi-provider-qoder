@@ -25,6 +25,7 @@
     "lint:fix": "node node_modules/@biomejs/biome/bin/biome check --write .",
     "format": "node node_modules/@biomejs/biome/bin/biome format --write .",
     "test": "vitest run",
+    "test:live": "tsx scripts/record-live-fixtures.ts",
     "test:watch": "vitest",
     "prepare": "npm run build",
     "prepublishOnly": "npm run check && npm run build"
@@ -39,6 +40,7 @@
     "@earendil-works/pi-ai": "^0.80.2",
     "@earendil-works/pi-coding-agent": "^0.84.1",
     "esbuild": "^0.28.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.0",
     "vitest": "^4.1.9"
   },
