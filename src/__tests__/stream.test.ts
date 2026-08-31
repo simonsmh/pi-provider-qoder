@@ -174,7 +174,7 @@ describe("streamQoder", () => {
     );
 
     globalThis.fetch = mockFetch(SUCCESS_SSE);
-    await consume(streamQoder(makeModel("qoder-cn"), makeContext(), { apiKey: "fake" }));
+    await consume(streamQoder(makeModel("qoder-cn", "Qwen3.7-Plus"), makeContext(), { apiKey: "fake" }));
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/gateway\.qoder\.com\.cn\//),
       expect.any(Object),
