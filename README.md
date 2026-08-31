@@ -1,170 +1,113 @@
 # pi-provider-qoder
 
-A [pi](https://shittycodingagent.ai/) provider extension that connects pi to the **Qoder API**, exposing Qoder Global and Qoder China models through provider surfaces.
-
-## Features
-
-- **Two provider entries**:
-  - `qoder` — Global / international Qoder.
-  - `qoder-cn` — Qoder China, always bound to CN endpoints.
-- **Interactive Login**: Global Qoder supports browser device-code flow or Personal Access Token (PAT) login.
-- **Qoder CN PAT Login**: China edition uses a separate PAT login entry (`/login qoder-cn`) and CN token exchange endpoints.
-- **WAF Bypass**: Built-in WAF obfuscation and body encoding (`Encode=1`).
-- **COSY Signing**: Full COSY signature header generation (RSA/AES-CBC/MD5).
-- **Dynamic Model Catalog**: Dynamically fetches model limits, effort configurations, and options from the `/algo/api/v2/model/list` endpoint.
-- **Reasoning/Thinking Support**: Real-time extraction of thinking process from API reasoning or HTML-like `<think>` tags.
-
-## Quick start
-
-Install the provider:
+A [pi](https://shittycodingagent.ai/) extension that connects pi to Qoder.
 
 ```bash
 pi install npm:pi-provider-qoder
 ```
 
-Or install it globally with npm:
+The published package ships `dist/index.js` via `pi.extensions`.
 
-```bash
-npm install -g pi-provider-qoder
-```
-
-Then log in from pi.
-
-Global / international edition:
-
-```text
-/login qoder
-```
-
-China edition:
-
-```text
-/login qoder-cn
-```
-
-### Personal Access Token (PAT)
-
-A Qoder PAT (`pt-...`) cannot authenticate API calls directly — the provider
-exchanges it for a short-lived job token (mirroring the official `qodercli` /
-`qoderclicn` flow) and resolves your account identity automatically.
-
-Global Qoder:
-
-- Run `/login qoder` and choose **Use API Key (PAT)**, then paste the token.
-- Or set `QODER_PERSONAL_ACCESS_TOKEN` (or `QODER_PAT`) before starting pi.
-- `QODER_API_KEY` is also accepted; when set, pi automatically exchanges it
-  and logs the provider in during startup.
-
-Qoder China:
-
-- Run `/login qoder-cn`, then paste the CN PAT.
-- Or set `QODERCN_PERSONAL_ACCESS_TOKEN` (or `QODERCN_PAT`) before starting pi.
-- `QODERCN_API_KEY` is also accepted and triggers the same automatic startup login.
-
-> The exchanged job token is short-lived; the provider transparently re-exchanges
-> the stored PAT when it expires.
-
-## Endpoints
-
-Global:
-
-- PAT exchange: `https://openapi.qoder.sh/api/v1/jobToken/exchange`
-- User info: `https://openapi.qoder.sh/api/v1/userinfo`
-- Usage: `https://openapi.qoder.sh/api/v2/quota/usage`
-- Model / chat gateway: `https://api3.qoder.sh/algo/api/v2/...`
-
-China:
-
-- PAT exchange: `https://openapi.qoder.com.cn/api/v1/jobToken/exchange`
-- User info: `https://openapi.qoder.com.cn/api/v1/userinfo`
-- Usage: `https://openapi.qoder.com.cn/api/v2/quota/usage`
-- Model / chat gateway: `https://gateway.qoder.com.cn/algo/api/v2/...`
-
-## Models
-
-### Global `qoder`
-
-Exposes friendly IDs derived from the catalog `display_name` (whitespace is
-removed), including:
-
-- **Tier Models**: `Auto`, `Ultimate`, `Performance`, `Efficient`, `Lite`
-- **Frontier Models**:
-  - `Qwen3.7Plus`
-  - `Cantus`
-  - `Qwen3.8-Max`
-  - `Qwen3.7-Max`
-  - `DeepSeek-V4-Pro`
-  - `DeepSeek-V4-Flash`
-  - `GLM-5.2`
-  - `Kimi-K2.7-Code`
-  - `Kimi-K3`
-  - `MiniMax-M3`
-
-Only these friendly IDs are public. Service keys such as `lite`, `qfmodel`, and
-`qmodel` cannot be selected with `--model`; the provider maps the chosen
-friendly ID to its internal service key only when sending a request.
-
-Global models default to a 1M context window, matching the Qoder API (verified
-against `lite` with prompts up to 1,000K tokens). `kmodel` stays at the 256K its
-catalog entry advertises. Once you log in, the live `/model/list` catalog
-overrides these fallbacks with the largest context option each model exposes.
-
-### China `qoder-cn`
-
-The China provider exposes friendly model IDs and maps them back to Qoder CN's
-internal keys at request time:
-
-| Friendly ID | Qoder CN key | Context | Images | Reasoning |
-| --- | --- | ---: | :---: | :---: |
-| `Auto` | `auto` | 200K | ✅ | ✅ |
-| `Qwen3.7-Max` | `qmodel_latest` | 1M | ✅ | ✅ |
-| `Qwen3.7-Plus` | `qmodel` | 1M | ❌ | ✅ |
-| `Qwen3.6-Flash` | `q36fmodel` | 1M | ❌ | ✅ |
-| `DeepSeek-V4-Pro` | `dmodel` | 1M | ❌ | ✅ |
-| `DeepSeek-V4-Flash` | `dfmodel` | 1M | ❌ | ❌ |
-| `GLM-5.2` | `gm51model` | 200K | ✅ | ✅ |
-| `Kimi-K2.7-Code` | `kmodel` | 256K | ✅ | ✅ |
-| `MiniMax-M2.7` | `mmodel` | 200K | ❌ | ❌ |
-
-## Usage
-
-Once logged in, select any Qoder model in pi:
-
-```text
-/model Qwen3.7-Plus
-```
-
-Or start directly:
-
-```bash
-pi --provider qoder-cn --model Qwen3.7-Plus
-```
-
-Global example:
+Log in, then pick a provider and a model:
 
 ```bash
 pi --provider qoder --model Lite
+pi --provider qoder-cn --model Qwen3.7-Plus
 ```
+
+Inside pi:
+
+```text
+/login qoder
+/model Qwen3.8-Max
+```
+
+## Providers
+
+Both providers are always registered together. Each is bound to one region at
+registration. There is no `QODER_REGION`, `QODER_BACKEND`, or `QODER_MODE`, and
+those cannot reroute `qoder` to China. Use `--provider qoder-cn` instead.
+
+### `qoder` (global)
+
+- Always `https://api3.qoder.sh/`
+- Login: `/login qoder` (browser OAuth or PAT)
+- PAT page: https://qoder.com/account/integrations
+- Env (first match): `QODER_API_KEY`, `QODER_PERSONAL_ACCESS_TOKEN`, `QODER_PAT`
+
+### `qoder-cn` (China)
+
+- Always `https://gateway.qoder.com.cn/`
+- Login: `/login qoder-cn` (PAT only; no browser login)
+- PAT page: https://qoder.com.cn/account/integrations
+- Env (first match): `QODERCN_API_KEY`, `QODERCN_PERSONAL_ACCESS_TOKEN`, `QODERCN_PAT`
+
+A PAT (`pt-...`) is exchanged for a short-lived job token (same as qodercli) and
+re-exchanged when it expires. Setting any of the env vars above logs that
+provider in automatically at startup.
+
+## Models
+
+Public model IDs are friendly names only: the catalog `display_name` with
+whitespace stripped. After login, the live `/algo/api/v2/model/list` catalog
+replaces the static fallback. Run `/model` to see what the region actually
+offers.
+
+Do not treat the static seeds as the live list; they go stale. Live CN currently
+includes models such as Qwen3.8-Flash and Qwen3.7-Flash that the static catalog
+may omit, and still lists some models that are gone live.
+
+Examples (not exhaustive):
+
+- Global `qoder`: `Lite`, `Qwen3.8-Max`, `Qwen3.7-Plus`
+- China `qoder-cn`: `Qwen3.8-Flash`, `Qwen3.7-Plus`
+
+Requests still send the internal upstream key (`lite`, `qfmodel`, …), but those
+keys are not public IDs. `--model qfmodel` fails with `Unknown Qoder model id`.
+`--model lite` as a raw key also fails; it can still work only because pi
+case-insensitively matches the friendly id `Lite`.
+
+Context window uses the largest option the live catalog advertises (often 1M).
+Output is capped at 128K tokens.
+
+## 0.4 breaking changes
+
+- Model IDs are friendly names only. Raw upstream keys are not public IDs.
+- Providers are region-bound: `qoder` is always global, `qoder-cn` is always CN.
+  `QODER_REGION` is gone.
+- The published extension entry is `dist/index.js` (fixes npm packages that pointed at src).
+
+## Endpoints
+
+| | Global (`qoder`) | China (`qoder-cn`) |
+| --- | --- | --- |
+| PAT exchange | `https://openapi.qoder.sh/api/v1/jobToken/exchange` | `https://openapi.qoder.com.cn/api/v1/jobToken/exchange` |
+| User info | `https://openapi.qoder.sh/api/v1/userinfo` | `https://openapi.qoder.com.cn/api/v1/userinfo` |
+| Usage | `https://openapi.qoder.sh/api/v2/quota/usage` | `https://openapi.qoder.com.cn/api/v2/quota/usage` |
+| Chat gateway | `https://api3.qoder.sh/` | `https://gateway.qoder.com.cn/` |
 
 ## Architecture
 
 ```text
 src/
-├── index.ts              # Register the two providers
-├── region.ts             # Fixed global/CN configuration and URL helpers
-├── cosy.ts               # COSY signing, machine ID, and gateway headers
-├── catalog.ts            # Friendly model IDs, live catalog cache, static seeds
+├── index.ts              # Register both providers
+├── region.ts             # Fixed global/CN URLs and env names
+├── catalog.ts            # Friendly IDs, live catalog cache, static seeds
+├── cosy.ts               # Internal request signing
 ├── auth/
-│   ├── pat.ts            # PAT → job-token exchange and identity
-│   ├── login.ts          # Browser/PAT login sequence
-│   ├── oauth.ts          # OAuth callback and credential orchestration
+│   ├── pat.ts            # PAT → job-token exchange
+│   ├── login.ts          # Browser/PAT login
+│   ├── oauth.ts          # Credentials, refresh, env auto-login
 │   └── usage.ts          # Quota reporting
 └── protocol/
-    ├── stream.ts         # Shared streaming request/response handler
-    ├── transform.ts      # Message and tool conversion
-    ├── encoding.ts       # WAF bypass body encoder
-    └── thinking.ts       # Fallback <think> tag parser
+    ├── stream.ts         # Streaming request/response
+    ├── transform.ts      # Message conversion
+    ├── encoding.ts       # Internal body encoding
+    └── thinking.ts       # Thinking-tag parser
 ```
+
+COSY signing and WAF body encoding are internal request plumbing, not
+user-facing features.
 
 ## License
 
