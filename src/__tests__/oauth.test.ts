@@ -2,9 +2,9 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { updateQoderModelsCache } from "../catalog.js";
 import { autoLoginQoderFromEnvironment, getCachedCredentials, getQoderPatForMode } from "../auth/oauth.js";
 import { credentialsFromPat } from "../auth/pat.js";
+import { updateQoderModelsCache } from "../catalog.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");

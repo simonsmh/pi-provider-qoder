@@ -12,9 +12,9 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import { buildAuthHeaders, getMachineId } from "../cosy.js";
-import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
 import { resolveQoderIdentity } from "../auth/oauth.js";
+import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
+import { buildAuthHeaders, getMachineId } from "../cosy.js";
 import { getQoderChatURL, getQoderRegionConfig } from "../region.js";
 import { qoderEncodeBody } from "./encoding.js";
 import { stripThinkingTags, ThinkingTagParser } from "./thinking.js";

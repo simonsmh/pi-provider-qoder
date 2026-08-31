@@ -1,11 +1,6 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import { getMachineId, QODER_CLIENT_TYPE, QODER_OPENAPI_COSY_VERSION } from "../cosy.js";
-import {
-  getQoderExchangeURL,
-  getQoderRegionConfig,
-  getQoderUserInfoURL,
-  type QoderMode,
-} from "../region.js";
+import { getQoderExchangeURL, getQoderRegionConfig, getQoderUserInfoURL, type QoderMode } from "../region.js";
 
 const UA = "pi-provider-qoder";
 

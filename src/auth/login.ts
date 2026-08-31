@@ -43,10 +43,7 @@ function parseExpiresAt(s?: string, expiresInSeconds?: number): number {
   return Date.now() + 30 * 24 * 60 * 60 * 1000; // default 30 days
 }
 
-export async function interactiveLogin(
-  callbacks: OAuthLoginCallbacks,
-  mode: QoderMode,
-): Promise<OAuthCredentials> {
+export async function interactiveLogin(callbacks: OAuthLoginCallbacks, mode: QoderMode): Promise<OAuthCredentials> {
   const region = getQoderRegionConfig(mode);
   // pi drives this via its built-in LoginDialog, which wires onPrompt/onAuth/
   // onProgress to a focused input. We must use those callbacks directly rather

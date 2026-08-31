@@ -3,12 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import { buildAuthHeaders } from "./cosy.js";
-import {
-  getQoderBaseUrl,
-  getQoderModelListURL,
-  getQoderRegionConfig,
-  type QoderMode,
-} from "./region.js";
+import { getQoderBaseUrl, getQoderModelListURL, getQoderRegionConfig, type QoderMode } from "./region.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
@@ -525,9 +520,7 @@ export function getCachedModelConfig(modelId: string, mode: QoderMode): QoderMod
       // Read old cache shapes without preserving their raw-key aliases.
       const legacyEntry = Object.values(data?.configs || {}).find(
         (entry) =>
-          entry &&
-          typeof entry === "object" &&
-          toQoderModelId((entry as QoderModelEntry).display_name) === modelId,
+          entry && typeof entry === "object" && toQoderModelId((entry as QoderModelEntry).display_name) === modelId,
       ) as QoderModelEntry | undefined;
       if (legacyEntry) {
         return withMaxContextAsDefault(legacyEntry);

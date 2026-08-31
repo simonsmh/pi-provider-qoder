@@ -1,15 +1,15 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./catalog.js";
-import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } from "./region.js";
 import {
   autoLoginQoderFromEnvironment,
   getCachedCredentials,
   loginQoderForMode,
   refreshQoderTokenForMode,
 } from "./auth/oauth.js";
-import { streamQoder } from "./protocol/stream.js";
 import { fetchQoderUsageForMode } from "./auth/usage.js";
+import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./catalog.js";
+import { streamQoder } from "./protocol/stream.js";
+import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } from "./region.js";
 
 // pi supports a `fetchUsage` hook on the oauth config at runtime, but it is not
 // part of the published ProviderConfig type. Declare the extension locally.
