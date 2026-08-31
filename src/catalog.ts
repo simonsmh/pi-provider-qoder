@@ -626,9 +626,9 @@ export async function updateQoderModelsCache(
 
     for (const entry of chatModels) {
       const key = entry.key;
-      if (!key || !entry.enable) continue;
+      if (!key || !entry.enable || !entry.display_name) continue;
 
-      const display = entry.display_name || key;
+      const display = entry.display_name;
       // Prefer the largest selectable context option the catalog advertises
       // (e.g. 1M when 200K/400K/1M are offered). If none is advertised, use
       // DEFAULT_CONTEXT_WINDOW rather than the stale 180K `max_input_tokens`

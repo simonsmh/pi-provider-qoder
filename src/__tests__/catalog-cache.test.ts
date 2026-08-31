@@ -75,6 +75,27 @@ describe("Qoder model cache", () => {
     expect(getCachedModelConfig("qfmodel", "global")).toBeNull();
   });
 
+  it("omits catalog entries without a friendly display name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            chat: [
+              { key: "q37fmodel", enable: true },
+              { key: "qfmodel", enable: true, display_name: "Qwen3.8-Flash" },
+            ],
+          }),
+      }),
+    );
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+    expect(getCachedModels("global").map((model) => model.id)).toEqual(["Qwen3.8-Flash"]);
+    expect(getCachedModelConfig("q37fmodel", "global")).toBeNull();
+  });
+
   it("keeps only enabled service models without adding auto as a fallback", async () => {
     vi.stubGlobal(
       "fetch",
