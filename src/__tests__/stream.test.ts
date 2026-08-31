@@ -290,9 +290,7 @@ describe("streamQoder", () => {
   it("preserves text emitted before and after a tool call", async () => {
     const sse =
       sseEnvelope(chunk({ content: "before" })) +
-      sseEnvelope(
-        chunk({ tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: "{}" } }] }),
-      ) +
+      sseEnvelope(chunk({ tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: "{}" } }] })) +
       sseEnvelope(chunk({ content: " after" })) +
       sseEnvelope(finishChunk("tool_calls")) +
       DONE_SSE;
