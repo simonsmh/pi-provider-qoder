@@ -83,7 +83,6 @@ export const staticModels: QoderModelDef[] = [
   {
     id: "Auto",
     upstreamKey: "auto",
-    upstreamKey: "auto",
     name: "Auto",
     api: "qoder-api",
     provider: "qoder",
@@ -196,7 +195,6 @@ export const staticModels: QoderModelDef[] = [
   {
     id: "Qwen3.7-Max",
     upstreamKey: "qmodel_latest",
-    upstreamKey: "qmodel_latest",
     name: "Qwen3.7-Max",
     api: "qoder-api",
     provider: "qoder",
@@ -298,6 +296,7 @@ export const staticModels: QoderModelDef[] = [
 export const staticCnModels: QoderModelDef[] = [
   {
     id: "Auto",
+    upstreamKey: "auto",
     name: "Auto",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -314,6 +313,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "Qwen3.7-Max",
+    upstreamKey: "qmodel_latest",
     name: "Qwen3.7-Max",
     api: "qoder-api",
     provider: "qoder-cn",

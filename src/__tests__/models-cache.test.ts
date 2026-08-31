@@ -41,7 +41,8 @@ describe("Qoder model cache", () => {
 
     const cache = JSON.parse(readFileSync(CACHE_PATHS[region], "utf8"));
     expect(cache.models.map((model: { id: string }) => model.id)).toEqual(expectedIds);
-    for (const entry of interaction.response.body.chat as Array<{ key: string; display_name: string }>) {
+    const catalog = interaction.response.body as { chat: Array<{ key: string; display_name: string }> };
+    for (const entry of catalog.chat) {
       const friendlyId = entry.display_name.replace(/\s+/g, "");
       expect(cache.configs[entry.key]?.key).toBe(entry.key);
       expect(cache.configs[friendlyId]?.key).toBe(entry.key);
