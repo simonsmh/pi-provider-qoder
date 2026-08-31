@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
-import { getMachineId, getQoderMode, isQoderCNMode } from "./cosy.js";
+import { getMachineId, getQoderMode, getQoderRegionConfig } from "./cosy.js";
 import { credentialsFromPat } from "./pat.js";
 
 type PromptFn = (p: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
@@ -40,13 +40,14 @@ export async function interactiveLogin(
   callbacks: OAuthLoginCallbacks,
   mode: string = getQoderMode(),
 ): Promise<OAuthCredentials> {
+  const region = getQoderRegionConfig(mode);
   // pi drives this via its built-in LoginDialog, which wires onPrompt/onAuth/
   // onProgress to a focused input. We must use those callbacks directly rather
   // than opening our own ctx.ui.custom surface (which would steal focus and
   // leave onPrompt unable to receive keystrokes).
   const prompt = getPrompt(callbacks);
   const pat = await prompt({
-    message: isQoderCNMode(mode)
+    message: !region.supportsBrowserLogin
       ? "Paste a Qoder CN Personal Access Token, or leave empty to cancel"
       : "Paste a Qoder Personal Access Token (pt-...), or leave empty for browser login",
     placeholder: "pt-...",
@@ -57,7 +58,7 @@ export async function interactiveLogin(
     return patLogin(callbacks, pat.trim(), mode);
   }
 
-  if (isQoderCNMode(mode)) {
+  if (!region.supportsBrowserLogin) {
     throw new Error(
       "Qoder CN browser login is not supported here. Paste a Qoder CN PAT from https://qoder.com.cn/account/integrations or set QODERCN_PERSONAL_ACCESS_TOKEN.",
     );
@@ -73,11 +74,12 @@ async function patLogin(
   providedPat?: string,
   mode: string = getQoderMode(),
 ): Promise<OAuthCredentials> {
+  const region = getQoderRegionConfig(mode);
   let pat = providedPat;
   if (!pat) {
     const prompt = getPrompt(callbacks);
     const entered = await prompt({
-      message: isQoderCNMode(mode)
+      message: !region.supportsBrowserLogin
         ? "Paste your Qoder CN Personal Access Token"
         : "Paste your Qoder Personal Access Token (pt-...)",
       placeholder: "pt-...",

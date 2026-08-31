@@ -3,9 +3,10 @@ import {
   getMachineId,
   getQoderExchangeURL,
   getQoderMode,
-  getQoderUserEmailFallback,
+  getQoderRegionConfig,
   getQoderUserInfoURL,
-  isQoderCNMode,
+  QODER_CLIENT_TYPE,
+  QODER_OPENAPI_COSY_VERSION,
 } from "./cosy.js";
 
 const UA = "pi-provider-qoder";
@@ -63,8 +64,8 @@ export async function exchangeJobToken(pat: string, mode: string = getQoderMode(
       "Content-Type": "application/json",
       Accept: "application/json",
       "User-Agent": UA,
-      "Cosy-Version": "1.0.1",
-      "Cosy-ClientType": "5",
+      "Cosy-Version": QODER_OPENAPI_COSY_VERSION,
+      "Cosy-ClientType": QODER_CLIENT_TYPE,
     },
     body: JSON.stringify({ personal_token: pat }),
   });
@@ -115,8 +116,8 @@ export async function fetchUserInfo(
         Authorization: `Bearer ${jobToken}`,
         Accept: "application/json",
         "User-Agent": UA,
-        "Cosy-Version": "1.0.1",
-        "Cosy-ClientType": "5",
+        "Cosy-Version": QODER_OPENAPI_COSY_VERSION,
+        "Cosy-ClientType": QODER_CLIENT_TYPE,
       },
     });
     if (res.ok) {
@@ -140,6 +141,7 @@ export async function fetchUserInfo(
  * into the refresh field so the token can be re-exchanged on expiry.
  */
 export async function credentialsFromPat(pat: string, mode: string = getQoderMode()): Promise<OAuthCredentials> {
+  const region = getQoderRegionConfig(mode);
   const { jobToken, jobRefreshToken, expiresAt } = await exchangeJobToken(pat, mode);
   const { userID, email, name } = await fetchUserInfo(jobToken, mode);
   const machineID = getMachineId();
@@ -149,8 +151,8 @@ export async function credentialsFromPat(pat: string, mode: string = getQoderMod
     access: jobToken,
     expires: expiresAt - 5 * 60 * 1000, // 5 min buffer
     userID,
-    email: email || getQoderUserEmailFallback(mode),
-    name: name || (isQoderCNMode(mode) ? "Qoder CN User" : "Qoder User"),
+    email: email || region.userEmailFallback,
+    name: name || region.userNameFallback,
     machineID,
   } as OAuthCredentials;
 }

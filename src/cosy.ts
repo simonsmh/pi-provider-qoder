@@ -12,8 +12,9 @@ XcW+ML9FoCI6AOvOzwIDAQAB
 
 // Keep the COSY client identity aligned with the current Qoder CLI catalog
 // protocol. Older values cause the model endpoint to return a reduced list.
-const QoderIDEVersion = "1.1.38";
-const QoderClientType = "5";
+export const QODER_GATEWAY_COSY_VERSION = "1.1.38";
+export const QODER_OPENAPI_COSY_VERSION = "1.0.1";
+export const QODER_CLIENT_TYPE = "5";
 const QoderDataPolicy = "disagree";
 const QoderLoginVersion = "v2";
 const QoderMachineOS =
@@ -29,6 +30,55 @@ const QoderMachineTypeMagic = "5";
 const QoderModeEnv = process.env.QODER_REGION || process.env.QODER_BACKEND || process.env.QODER_MODE || "";
 
 export type QoderMode = "global" | "cn";
+
+export interface QoderRegionConfig {
+  mode: QoderMode;
+  providerID: "qoder" | "qoder-cn";
+  baseUrl: string;
+  openApiUrl: string;
+  centerUrl: string;
+  manageUrl: string;
+  modelCacheFile: string;
+  patEnvNames: readonly string[];
+  loginName: string;
+  userNameFallback: string;
+  userEmailFallback: string;
+  usageTitle: string;
+  supportsBrowserLogin: boolean;
+}
+
+const QODER_REGIONS: Record<QoderMode, QoderRegionConfig> = {
+  global: {
+    mode: "global",
+    providerID: "qoder",
+    baseUrl: "https://api3.qoder.sh/",
+    openApiUrl: "https://openapi.qoder.sh",
+    centerUrl: "https://center.qoder.sh",
+    manageUrl: "https://qoder.com",
+    modelCacheFile: "qoder-models-cache.json",
+    patEnvNames: ["QODER_API_KEY", "QODER_PERSONAL_ACCESS_TOKEN", "QODER_PAT"],
+    loginName: "Qoder (Browser OAuth / PAT)",
+    userNameFallback: "Qoder User",
+    userEmailFallback: "user@qoder.com",
+    usageTitle: "Qoder AI Plan",
+    supportsBrowserLogin: true,
+  },
+  cn: {
+    mode: "cn",
+    providerID: "qoder-cn",
+    baseUrl: "https://gateway.qoder.com.cn/",
+    openApiUrl: "https://openapi.qoder.com.cn",
+    centerUrl: "https://gateway.qoder.com.cn",
+    manageUrl: "https://qoder.com.cn",
+    modelCacheFile: "qoder-cn-models-cache.json",
+    patEnvNames: ["QODERCN_API_KEY", "QODERCN_PERSONAL_ACCESS_TOKEN", "QODERCN_PAT"],
+    loginName: "Qoder CN (PAT)",
+    userNameFallback: "Qoder CN User",
+    userEmailFallback: "user@qoder.com.cn",
+    usageTitle: "Qoder CN Plan",
+    supportsBrowserLogin: false,
+  },
+};
 
 interface UserInfo {
   uid: string;
@@ -71,20 +121,20 @@ export function isQoderCNMode(modeOverride?: string): boolean {
   return getQoderMode(modeOverride) === "cn";
 }
 
-export function getQoderCNPat(): string {
-  return process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODERCN_PAT || "";
+export function getQoderRegionConfig(mode?: string): QoderRegionConfig {
+  return QODER_REGIONS[getQoderMode(mode)];
 }
 
 export function getQoderBaseUrl(mode?: string): string {
-  return isQoderCNMode(mode) ? "https://gateway.qoder.com.cn/" : "https://api3.qoder.sh/";
+  return getQoderRegionConfig(mode).baseUrl;
 }
 
 export function getQoderOpenApiUrl(mode?: string): string {
-  return isQoderCNMode(mode) ? "https://openapi.qoder.com.cn" : "https://openapi.qoder.sh";
+  return getQoderRegionConfig(mode).openApiUrl;
 }
 
 export function getQoderCenterUrl(mode?: string): string {
-  return isQoderCNMode(mode) ? "https://gateway.qoder.com.cn" : "https://center.qoder.sh";
+  return getQoderRegionConfig(mode).centerUrl;
 }
 
 export function getQoderModelListURL(mode?: string): string {
@@ -130,11 +180,11 @@ export function toQoderModelId(displayName?: string): string {
 }
 
 export function getQoderManageUrl(mode?: string): string {
-  return isQoderCNMode(mode) ? "https://qoder.com.cn" : "https://qoder.com";
+  return getQoderRegionConfig(mode).manageUrl;
 }
 
 export function getQoderUserEmailFallback(mode?: string): string {
-  return isQoderCNMode(mode) ? "user@qoder.com.cn" : "user@qoder.com";
+  return getQoderRegionConfig(mode).userEmailFallback;
 }
 
 function rsaEncryptBase64(data: Buffer | string): string {
@@ -212,7 +262,7 @@ export function buildAuthHeaders(
     version: "v1",
     requestId,
     info: infoB64,
-    cosyVersion: QoderIDEVersion,
+    cosyVersion: QODER_GATEWAY_COSY_VERSION,
     ideVersion: "",
   };
 
@@ -236,12 +286,12 @@ export function buildAuthHeaders(
     "Cosy-Key": cosyKey,
     "Cosy-User": creds.userID,
     "Cosy-Date": timestamp,
-    "Cosy-Version": QoderIDEVersion,
+    "Cosy-Version": QODER_GATEWAY_COSY_VERSION,
     "Cosy-Machineid": machineID,
     "Cosy-Machinetoken": machineID,
     "Cosy-Machinetype": QoderMachineTypeMagic,
     "Cosy-Machineos": QoderMachineOS,
-    "Cosy-Clienttype": QoderClientType,
+    "Cosy-Clienttype": QODER_CLIENT_TYPE,
     "Cosy-Clientip": "127.0.0.1",
     "Cosy-Bodyhash": bodyHash,
     "Cosy-Bodylength": bodyLen,

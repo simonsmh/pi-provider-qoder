@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
-import { getMachineId, getQoderMode, getQoderRefreshURL, getQoderUserEmailFallback, isQoderCNMode } from "./cosy.js";
+import { getMachineId, getQoderMode, getQoderRefreshURL, getQoderRegionConfig } from "./cosy.js";
 import { interactiveLogin } from "./login.js";
 import { updateQoderModelsCache } from "./models.js";
 import { credentialsFromPat, decodePatRefresh, fetchUserInfo, isPatRefresh } from "./pat.js";
@@ -30,10 +30,11 @@ const AuthStorage = (
 
 /** Return the PAT exposed through the environment for a provider mode. */
 export function getQoderPatForMode(mode: string): string {
-  if (isQoderCNMode(mode)) {
-    return process.env.QODERCN_API_KEY || process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODERCN_PAT || "";
+  for (const envName of getQoderRegionConfig(mode).patEnvNames) {
+    const value = process.env[envName];
+    if (value) return value;
   }
-  return process.env.QODER_API_KEY || process.env.QODER_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT || "";
+  return "";
 }
 
 function saveCredentialsToAuthFile(providerID: string, credentials: OAuthCredentials): void {
@@ -119,6 +120,7 @@ export async function resolveQoderIdentity(
   providerID: string,
   mode: string,
 ): Promise<QoderCredentials> {
+  const region = getQoderRegionConfig(mode);
   const cached = getCachedCredentials(accessToken, providerID);
   if (cached?.userID) return cached;
 
@@ -131,8 +133,8 @@ export async function resolveQoderIdentity(
   const creds: QoderCredentials = {
     access: accessToken,
     userID: info.userID || "qoder-user",
-    email: info.email || getQoderUserEmailFallback(mode),
-    name: info.name || (isQoderCNMode(mode) ? "Qoder CN User" : "Qoder User"),
+    email: info.email || region.userEmailFallback,
+    name: info.name || region.userNameFallback,
     machineID,
     refresh: "",
     expires: 0,
@@ -143,7 +145,7 @@ export async function resolveQoderIdentity(
 }
 
 async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): Promise<OAuthCredentials> {
-  const providerID = isQoderCNMode(mode) ? "qoder-cn" : "qoder";
+  const providerID = getQoderRegionConfig(mode).providerID;
   // 1. Try environment variables first (PAT). A PAT (pt-...) must be exchanged
   //    for a short-lived job token before it can be used — credentialsFromPat
   //    handles the exchange + identity resolution.

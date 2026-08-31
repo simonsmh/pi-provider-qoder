@@ -17,7 +17,7 @@ import {
   getMachineId,
   getQoderChatURL,
   getQoderMode,
-  getQoderUserEmailFallback,
+  getQoderRegionConfig,
   isQoderCNMode,
 } from "./cosy.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "./models.js";
@@ -118,6 +118,7 @@ export function streamQoder(
   (async () => {
     try {
       const providerMode = model.provider === "qoder-cn" ? "cn" : getQoderMode();
+      const region = getQoderRegionConfig(providerMode);
       const accessToken = options?.apiKey;
       if (!accessToken) {
         throw new Error(
@@ -133,8 +134,8 @@ export function streamQoder(
       // it with "Login expired" (105).
       const ident = await resolveQoderIdentity(accessToken, model.provider, providerMode);
       const userID = ident.userID || "qoder-user";
-      const name = ident.name || (isQoderCNMode(providerMode) ? "Qoder CN User" : "Qoder User");
-      const email = ident.email || getQoderUserEmailFallback(providerMode);
+      const name = ident.name || region.userNameFallback;
+      const email = ident.email || region.userEmailFallback;
       const machineID = ident.machineID || getMachineId();
 
       // Both providers expose the upstream display_name (whitespace stripped)
