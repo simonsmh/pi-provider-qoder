@@ -20,8 +20,8 @@ import {
   getQoderUserEmailFallback,
   isQoderCNMode,
 } from "./cosy.js";
-import { resolveQoderIdentity, getCachedCredentials } from "./oauth.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "./models.js";
+import { resolveQoderIdentity } from "./oauth.js";
 import { qoderEncodeBody } from "./qoder-encoding.js";
 import { stripThinkingTags, ThinkingTagParser } from "./thinking-parser.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
@@ -73,7 +73,6 @@ function stableChatRecordID(
   hash.update(`mt=${maxTokens}`);
   return hash.digest("hex").slice(0, 16);
 }
-
 
 function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -293,7 +292,6 @@ export function streamQoder(
       });
 
       const modelSource = modelConfig.source || "system";
-
 
       const response = await fetch(chatURL, {
         method: "POST",

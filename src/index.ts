@@ -30,7 +30,7 @@ function modelsForProvider(mode: string, providerID: string): Model<Api>[] {
   })) as unknown as Model<Api>[];
 }
 
-function createQoderOAuth(providerID: string, mode: string): OAuthConfigWithUsage {
+function createQoderOAuth(_providerID: string, mode: string): OAuthConfigWithUsage {
   return {
     name: isQoderCNMode(mode) ? "Qoder CN (PAT)" : "Qoder (Browser OAuth / PAT)",
     login: isQoderCNMode(mode) ? loginQoderCN : loginQoder,
@@ -52,7 +52,9 @@ function registerQoderProvider(pi: ExtensionAPI, providerID: string, mode: strin
     api: "qoder-api" as Api,
     models: modelsForProvider(mode, providerID) as unknown as ProviderConfig["models"],
     oauth: oauth as ProviderConfig["oauth"],
-    streamSimple: streamQoder,
+    // pi-coding-agent resolves its own nested @earendil-works/pi-ai copy, so the
+    // structurally identical Model/Context types are nominally distinct here.
+    streamSimple: streamQoder as unknown as ProviderConfig["streamSimple"],
   });
 }
 
