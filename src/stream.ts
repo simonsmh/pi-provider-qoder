@@ -307,7 +307,14 @@ export function streamQoder(
 
       stream.push({ type: "start", partial: output });
 
-      while (true) {
+      // `data: [DONE]` is the end of the response. Break the read loop too, not
+      // just the line loop: Qoder's gateway keeps the HTTP body open after the
+      // sentinel, so waiting for `done` from reader.read() hung until the
+      // server or the OS eventually closed the socket. The full reply had
+      // already been streamed by then, so the agent looked stuck with no error.
+      let sawDone = false;
+
+      while (!sawDone) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -324,6 +331,7 @@ export function streamQoder(
 
           const dataStr = line.substring(5).trim();
           if (dataStr === "[DONE]") {
+            sawDone = true;
             break;
           }
 
@@ -334,7 +342,14 @@ export function streamQoder(
             }
 
             const innerStr = envelope.body;
-            if (!innerStr || innerStr === "[DONE]") continue;
+            // The gateway sends the sentinel wrapped in an envelope
+            // (`body: "[DONE]"`) as well as bare, and both mean the reply is
+            // over, so both have to end the read loop.
+            if (innerStr === "[DONE]") {
+              sawDone = true;
+              break;
+            }
+            if (!innerStr) continue;
 
             const inner = JSON.parse(innerStr);
             if (inner.id) output.responseId = inner.id as string;
@@ -505,6 +520,10 @@ export function streamQoder(
           }
         }
       }
+
+      // Stop reading and let the connection go once the reply is complete.
+      // Without this the body stays open until the server times it out.
+      await reader.cancel().catch(() => {});
 
       if (thinkingParser) {
         thinkingParser.finalize();

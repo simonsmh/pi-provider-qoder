@@ -72,12 +72,33 @@ export function transformTools(tools: Tool[]): QoderTool[] {
 export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
   const normalizedMessages: QoderMessage[] = [];
 
+  // Dropping an assistant turn (below) also invalidates its tool calls: the
+  // result that follows would refer to a tool_calls entry that is no longer in
+  // the request, and upstreams reject that with "tool must follow a message
+  // with tool_calls".
+  const droppedToolCallIds = new Set<string>();
+
   for (const msg of messages) {
     // Skip error or aborted messages
     if (
       msg.role === "assistant" &&
       ((msg as AssistantMessage).stopReason === "error" || (msg as AssistantMessage).stopReason === "aborted")
     ) {
+      const am = msg as AssistantMessage;
+      if (Array.isArray(am.content)) {
+        for (const block of am.content) {
+          if (block.type === "toolCall") {
+            const id = (block as ToolCall).id;
+            if (id) droppedToolCallIds.add(id);
+          }
+        }
+      }
+      continue;
+    }
+
+    // Drop the result too, otherwise it refers to a tool_calls entry that is
+    // no longer in the request.
+    if (msg.role === "toolResult" && droppedToolCallIds.has((msg as ToolResultMessage).toolCallId)) {
       continue;
     }
 

@@ -290,4 +290,58 @@ describe("streamQoder", () => {
     expect(msg.content.find((c) => c.type === "toolCall")).toBeUndefined();
     expect(msg.stopReason).toBe("stop");
   });
+  it("finishes when the gateway sends [DONE] but keeps the body open", async () => {
+    // Qoder's gateway does not always close the HTTP body after the sentinel.
+    // The read loop used to keep awaiting reader.read() until the socket went
+    // away, so a fully streamed reply never produced a done event and the
+    // agent appeared to hang with no error.
+    const sse = sseEnvelope(chunk({ content: "OK", role: "assistant" })) + sseEnvelope(finishChunk("stop")) + DONE_SSE;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        // Deliberately never call controller.close().
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    globalThis.fetch = vi.fn(
+      async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    ) as unknown as typeof fetch;
+
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done, "expected a done event even though the body stayed open").toBeDefined();
+    const msg = (done as { message: AssistantMessage }).message;
+    expect(msg.stopReason).toBe("stop");
+    const text = msg.content.find((c) => c.type === "text");
+    expect(text && "text" in text ? text.text : "").toBe("OK");
+    // The reader is released rather than left holding the connection.
+    expect(cancelled).toBe(true);
+  });
+
+  it("finishes on a bare 'data: [DONE]' line with the body left open", async () => {
+    // Same sentinel, unwrapped.
+    const sse = `${sseEnvelope(chunk({ content: "hi", role: "assistant" }))}data: [DONE]\n\n`;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+      },
+    });
+    globalThis.fetch = vi.fn(
+      async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    ) as unknown as typeof fetch;
+
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const done = events.find((e) => e.type === "done");
+    expect(done, "expected a done event for the bare sentinel").toBeDefined();
+    const msg = (done as { message: AssistantMessage }).message;
+    const text = msg.content.find((c) => c.type === "text");
+    expect(text && "text" in text ? text.text : "").toBe("hi");
+  });
 });
