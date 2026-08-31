@@ -32,7 +32,7 @@ afterEach(() => {
 describe("Qoder model cache", () => {
   it.each([
     ["global", ["Lite", "GLM5.2"]],
-    ["cn", ["Auto", "Qwen3.7-Max"]],
+    ["cn", ["Qwen3.7Plus"]],
   ] as const)("maps the %s recorded-format catalog to friendly picker ids", async (region, expectedIds) => {
     const interaction = loadLiveFixture(region).interactions.modelList;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));

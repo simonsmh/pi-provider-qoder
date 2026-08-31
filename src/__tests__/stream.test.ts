@@ -432,6 +432,10 @@ describe("streamQoder", () => {
     globalThis.fetch = vi.fn(
       (_url: URL | RequestInfo, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
           init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
             once: true,
           });
