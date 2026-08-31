@@ -1,5 +1,5 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
-import { getQoderMode, getQoderRegionConfig, getQoderUsageURL } from "./cosy.js";
+import { getQoderRegionConfig, getQoderUsageURL } from "./cosy.js";
 
 interface QoderQuota {
   total: number;
@@ -33,7 +33,10 @@ export interface QoderProviderUsage {
   raw?: Record<string, unknown>;
 }
 
-async function fetchQoderUsageForMode(credentials: OAuthCredentials, mode: string): Promise<QoderProviderUsage> {
+export async function fetchQoderUsageForMode(
+  credentials: OAuthCredentials,
+  mode: string,
+): Promise<QoderProviderUsage> {
   const region = getQoderRegionConfig(mode);
   const response = await fetch(getQoderUsageURL(mode), {
     method: "GET",
@@ -83,12 +86,4 @@ async function fetchQoderUsageForMode(credentials: OAuthCredentials, mode: strin
     usageBuckets,
     raw: raw as unknown as Record<string, unknown>,
   };
-}
-
-export async function fetchQoderUsage(credentials: OAuthCredentials): Promise<QoderProviderUsage> {
-  return fetchQoderUsageForMode(credentials, getQoderMode());
-}
-
-export async function fetchQoderUsageCN(credentials: OAuthCredentials): Promise<QoderProviderUsage> {
-  return fetchQoderUsageForMode(credentials, "cn");
 }

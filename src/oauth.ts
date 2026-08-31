@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
-import { getMachineId, getQoderMode, getQoderRefreshURL, getQoderRegionConfig } from "./cosy.js";
+import { getMachineId, getQoderRefreshURL, getQoderRegionConfig } from "./cosy.js";
 import { interactiveLogin } from "./login.js";
 import { updateQoderModelsCache } from "./models.js";
 import { credentialsFromPat, decodePatRefresh, fetchUserInfo, isPatRefresh } from "./pat.js";
@@ -144,7 +144,7 @@ export async function resolveQoderIdentity(
   return creds;
 }
 
-async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): Promise<OAuthCredentials> {
+export async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): Promise<OAuthCredentials> {
   const providerID = getQoderRegionConfig(mode).providerID;
   // 1. Try environment variables first (PAT). A PAT (pt-...) must be exchanged
   //    for a short-lived job token before it can be used — credentialsFromPat
@@ -182,23 +182,10 @@ async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): 
   return creds;
 }
 
-export async function loginQoder(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-  return loginQoderForMode(callbacks, getQoderMode());
-}
-
-export async function loginQoderCN(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-  return loginQoderForMode(callbacks, "cn");
-}
-
-export async function refreshQoderToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-  return refreshQoderTokenForMode(credentials, getQoderMode());
-}
-
-export async function refreshQoderTokenCN(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-  return refreshQoderTokenForMode(credentials, "cn");
-}
-
-async function refreshQoderTokenForMode(credentials: OAuthCredentials, mode: string): Promise<OAuthCredentials> {
+export async function refreshQoderTokenForMode(
+  credentials: OAuthCredentials,
+  mode: string,
+): Promise<OAuthCredentials> {
   // PAT-based credentials: re-exchange the stored PAT for a fresh job token.
   if (isPatRefresh(credentials.refresh)) {
     const { pat } = decodePatRefresh(credentials.refresh);

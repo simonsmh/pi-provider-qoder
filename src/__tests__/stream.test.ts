@@ -93,8 +93,8 @@ function mockFetch(body: string): typeof fetch {
   return vi.fn(async () => response) as unknown as typeof fetch;
 }
 
-function makeModel(): Model<Api> {
-  return { id: "ultimate", api: "qoder-api" as Api, provider: "qoder" } as Model<Api>;
+function makeModel(provider = "qoder"): Model<Api> {
+  return { id: "ultimate", api: "qoder-api" as Api, provider } as Model<Api>;
 }
 
 function makeContext(): Context {
@@ -116,8 +116,11 @@ async function consume(stream: AssistantMessageEventStream): Promise<AssistantMe
 
 describe("streamQoder", () => {
   const originalFetch = globalThis.fetch;
+  const originalCnPat = process.env.QODERCN_PERSONAL_ACCESS_TOKEN;
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalCnPat === undefined) delete process.env.QODERCN_PERSONAL_ACCESS_TOKEN;
+    else process.env.QODERCN_PERSONAL_ACCESS_TOKEN = originalCnPat;
     vi.restoreAllMocks();
   });
 
@@ -132,6 +135,24 @@ describe("streamQoder", () => {
     expect(msg.stopReason).toBe("stop");
     const text = msg.content.find((c) => c.type === "text");
     expect(text && "text" in text ? text.text : "").toBe("OK");
+  });
+
+  it("binds chat hosts to provider ids even when only a CN PAT is set", async () => {
+    process.env.QODERCN_PERSONAL_ACCESS_TOKEN = "pt-cn-only";
+
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(streamQoder(makeModel("qoder"), makeContext(), { apiKey: "fake" }));
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/api3\.qoder\.sh\//),
+      expect.any(Object),
+    );
+
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(streamQoder(makeModel("qoder-cn"), makeContext(), { apiKey: "fake" }));
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/gateway\.qoder\.com\.cn\//),
+      expect.any(Object),
+    );
   });
 
   it("surfaces an upstream 406 'Session blocked' as an error event, not a silent stop", async () => {

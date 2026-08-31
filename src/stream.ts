@@ -16,7 +16,6 @@ import {
   buildAuthHeaders,
   getMachineId,
   getQoderChatURL,
-  getQoderMode,
   getQoderRegionConfig,
   isQoderCNMode,
 } from "./cosy.js";
@@ -117,7 +116,7 @@ export function streamQoder(
 
   (async () => {
     try {
-      const providerMode = model.provider === "qoder-cn" ? "cn" : getQoderMode();
+      const providerMode = model.provider === "qoder-cn" ? "cn" : "global";
       const region = getQoderRegionConfig(providerMode);
       const accessToken = options?.apiKey;
       if (!accessToken) {

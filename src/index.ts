@@ -1,17 +1,15 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { getQoderBaseUrl, getQoderMode, getQoderRegionConfig, isQoderCNMode } from "./cosy.js";
+import { getQoderBaseUrl, getQoderRegionConfig, isQoderCNMode } from "./cosy.js";
 import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./models.js";
 import {
   autoLoginQoderFromEnvironment,
   getCachedCredentials,
-  loginQoder,
-  loginQoderCN,
-  refreshQoderToken,
-  refreshQoderTokenCN,
+  loginQoderForMode,
+  refreshQoderTokenForMode,
 } from "./oauth.js";
 import { streamQoder } from "./stream.js";
-import { fetchQoderUsage, fetchQoderUsageCN } from "./usage.js";
+import { fetchQoderUsageForMode } from "./usage.js";
 
 // pi supports a `fetchUsage` hook on the oauth config at runtime, but it is not
 // part of the published ProviderConfig type. Declare the extension locally.
@@ -30,24 +28,24 @@ function modelsForProvider(mode: string, providerID: string): Model<Api>[] {
   })) as unknown as Model<Api>[];
 }
 
-function createQoderOAuth(_providerID: string, mode: string): OAuthConfigWithUsage {
+function createQoderOAuth(mode: string): OAuthConfigWithUsage {
   const region = getQoderRegionConfig(mode);
   return {
     name: region.loginName,
-    login: isQoderCNMode(mode) ? loginQoderCN : loginQoder,
-    refreshToken: isQoderCNMode(mode) ? refreshQoderTokenCN : refreshQoderToken,
+    login: (callbacks) => loginQoderForMode(callbacks, mode),
+    refreshToken: (credentials) => refreshQoderTokenForMode(credentials, mode),
     getApiKey: (cred: OAuthCredentials) => cred.access,
     // NOTE: no `modifyModels` hook on purpose. OMP (Bun) does a whole-catalog
     // structuredClone before invoking it, and its bundled catalog contains a
     // model with a non-cloneable property -> "The object can not be cloned."
     // removes qoder from `omp models`. Models are supplied at registration
     // via `modelsForProvider` and refreshed by the startup/session cache hooks.
-    fetchUsage: isQoderCNMode(mode) ? fetchQoderUsageCN : fetchQoderUsage,
+    fetchUsage: (credentials) => fetchQoderUsageForMode(credentials, mode),
   };
 }
 
 function registerQoderProvider(pi: ExtensionAPI, providerID: string, mode: string): void {
-  const oauth = createQoderOAuth(providerID, mode);
+  const oauth = createQoderOAuth(mode);
   pi.registerProvider(providerID, {
     baseUrl: getQoderBaseUrl(mode),
     api: "qoder-api" as Api,
@@ -77,7 +75,7 @@ async function refreshModelsAtStartup(providerID: string, mode: string): Promise
 
 export default async function (pi: ExtensionAPI) {
   for (const [providerID, mode] of [
-    ["qoder", getQoderMode()],
+    ["qoder", "global"],
     ["qoder-cn", "cn"],
   ] as const) {
     try {
@@ -95,7 +93,7 @@ export default async function (pi: ExtensionAPI) {
   // the cache was deleted while the token is still valid.
   pi.on("session_start", async (_event, ctx) => {
     for (const [providerID, mode] of [
-      ["qoder", getQoderMode()],
+      ["qoder", "global"],
       ["qoder-cn", "cn"],
     ] as const) {
       try {
@@ -113,6 +111,6 @@ export default async function (pi: ExtensionAPI) {
     }
   });
 
-  registerQoderProvider(pi, "qoder", getQoderMode());
+  registerQoderProvider(pi, "qoder", "global");
   registerQoderProvider(pi, "qoder-cn", "cn");
 }
