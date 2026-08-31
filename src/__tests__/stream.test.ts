@@ -236,6 +236,77 @@ describe("streamQoder", () => {
     expect(toolCall).toBeDefined();
   });
 
+  it("assembles reasoning chunks before the final answer", async () => {
+    const sse =
+      sseEnvelope(chunk({ reasoning_content: "check " })) +
+      sseEnvelope(chunk({ reasoning_content: "twice" })) +
+      sseEnvelope(chunk({ content: "done" })) +
+      sseEnvelope(finishChunk("stop")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake", reasoning: "high" }));
+    const done = events.find((event) => event.type === "done") as { message: AssistantMessage };
+
+    expect(done.message.content).toEqual([
+      { type: "thinking", thinking: "check twice" },
+      { type: "text", text: "done" },
+    ]);
+    expect(events.map((event) => event.type)).toContain("thinking_delta");
+  });
+
+  it("assembles parallel tool calls by their stream indexes", async () => {
+    const sse =
+      sseEnvelope(
+        chunk({
+          tool_calls: [
+            { index: 0, id: "call_a", function: { name: "read", arguments: '{"path":' } },
+            { index: 1, id: "call_b", function: { name: "search", arguments: '{"query":' } },
+          ],
+        }),
+      ) +
+      sseEnvelope(
+        chunk({
+          tool_calls: [
+            { index: 0, function: { arguments: '"/a"}' } },
+            { index: 1, function: { arguments: '"needle"}' } },
+          ],
+        }),
+      ) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake" }));
+    const done = events.find((event) => event.type === "done") as { message: AssistantMessage };
+    const calls = done.message.content.filter((block): block is ToolCall => block.type === "toolCall");
+
+    expect(calls).toEqual([
+      { type: "toolCall", id: "call_a", name: "read", arguments: { path: "/a" } },
+      { type: "toolCall", id: "call_b", name: "search", arguments: { query: "needle" } },
+    ]);
+  });
+
+  it("preserves text emitted before and after a tool call", async () => {
+    const sse =
+      sseEnvelope(chunk({ content: "before" })) +
+      sseEnvelope(
+        chunk({ tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: "{}" } }] }),
+      ) +
+      sseEnvelope(chunk({ content: " after" })) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake" }));
+    const done = events.find((event) => event.type === "done") as { message: AssistantMessage };
+
+    expect(done.message.content).toEqual([
+      { type: "text", text: "before after" },
+      { type: "toolCall", id: "call_1", name: "lookup", arguments: {} },
+    ]);
+  });
+
   it("emits a tool call that arrives with no arguments", async () => {
     // A no-argument tool, or a model that sends id+name and stops. The block
     // used to be created only inside `if (tc.function?.arguments)`, so this
@@ -354,5 +425,27 @@ describe("streamQoder", () => {
     const msg = (done as { message: AssistantMessage }).message;
     const text = msg.content.find((c) => c.type === "text");
     expect(text && "text" in text ? text.text : "").toBe("hi");
+  });
+
+  it("reports aborted when the request is cancelled before streaming starts", async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn(
+      (_url: URL | RequestInfo, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+            once: true,
+          });
+        }),
+    ) as unknown as typeof fetch;
+
+    const eventsPromise = consume(
+      streamQoder(makeModel(), makeContext(), { apiKey: "fake", signal: controller.signal }),
+    );
+    controller.abort();
+    const events = await eventsPromise;
+
+    const error = events.find((event) => event.type === "error") as { error: AssistantMessage };
+    expect(error.error.stopReason).toBe("aborted");
+    expect(events.find((event) => event.type === "done")).toBeUndefined();
   });
 });

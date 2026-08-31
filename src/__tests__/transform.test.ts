@@ -348,6 +348,32 @@ describe("transformMessagesForQoder", () => {
     expect(tool.role).toBe("tool");
     expect(tool.tool_call_id).toBe("call_abc123");
   });
+
+  it("preserves parallel tool result pairing and the following user turn", () => {
+    const msgs = [
+      { role: "user", content: "compare both" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking." },
+          { type: "toolCall", id: "call_a", name: "read", arguments: { path: "a" } },
+          { type: "toolCall", id: "call_b", name: "read", arguments: { path: "b" } },
+        ],
+      },
+      { role: "toolResult", toolCallId: "call_a", content: "A" },
+      { role: "toolResult", toolCallId: "call_b", content: "B" },
+      { role: "assistant", content: [{ type: "text", text: "A and B differ." }] },
+      { role: "user", content: "fix A" },
+    ] as unknown as Message[];
+
+    const result = transformMessagesForQoder(msgs);
+    const assistant = result[1] as { tool_calls?: Array<{ id: string }> };
+
+    expect(result.map((message) => message.role)).toEqual(["user", "assistant", "tool", "tool", "assistant", "user"]);
+    expect(assistant.tool_calls?.map((call) => call.id)).toEqual(["call_a", "call_b"]);
+    expect(result.slice(2, 4).map((message) => message.tool_call_id)).toEqual(["call_a", "call_b"]);
+  });
+
   it("drops the tool result whose assistant turn was aborted", () => {
     // Cancelling a turn mid-tool used to drop only the assistant message and
     // keep its tool result, leaving a `tool` message with no matching

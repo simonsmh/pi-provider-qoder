@@ -5,30 +5,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCachedModels, updateQoderModelsCache } from "../models.js";
 import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
-const CACHE_PATH = join(homedir(), ".pi", "agent", "qoder-models-cache.json");
-let originalCache: string | undefined;
+const CACHE_PATHS = {
+  global: join(homedir(), ".pi", "agent", "qoder-models-cache.json"),
+  cn: join(homedir(), ".pi", "agent", "qoder-cn-models-cache.json"),
+};
+let originalCaches: Record<keyof typeof CACHE_PATHS, string | undefined>;
 
 beforeEach(() => {
-  originalCache = existsSync(CACHE_PATH) ? readFileSync(CACHE_PATH, "utf8") : undefined;
-  rmSync(CACHE_PATH, { force: true });
+  originalCaches = {
+    global: existsSync(CACHE_PATHS.global) ? readFileSync(CACHE_PATHS.global, "utf8") : undefined,
+    cn: existsSync(CACHE_PATHS.cn) ? readFileSync(CACHE_PATHS.cn, "utf8") : undefined,
+  };
+  for (const path of Object.values(CACHE_PATHS)) rmSync(path, { force: true });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  if (originalCache === undefined) rmSync(CACHE_PATH, { force: true });
-  else writeFileSync(CACHE_PATH, originalCache, "utf8");
+  for (const region of Object.keys(CACHE_PATHS) as Array<keyof typeof CACHE_PATHS>) {
+    const path = CACHE_PATHS[region];
+    const original = originalCaches[region];
+    if (original === undefined) rmSync(path, { force: true });
+    else writeFileSync(path, original, "utf8");
+  }
 });
 
 describe("Qoder model cache", () => {
-  it("replays the recorded-format model-list schema", async () => {
-    const interaction = loadLiveFixture("global").interactions.modelList;
+  it.each([
+    ["global", ["Lite", "GLM5.2"]],
+    ["cn", ["Auto", "Qwen3.7-Max"]],
+  ] as const)("maps the %s recorded-format catalog to friendly picker ids", async (region, expectedIds) => {
+    const interaction = loadLiveFixture(region).interactions.modelList;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));
 
-    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", region);
 
-    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
-    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["lite", "gm51model"]);
-    expect(cache.models.map((model: { contextWindow: number }) => model.contextWindow)).toEqual([1_000_000, 200_000]);
+    const cache = JSON.parse(readFileSync(CACHE_PATHS[region], "utf8"));
+    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(expectedIds);
+    for (const entry of interaction.response.body.chat as Array<{ key: string; display_name: string }>) {
+      const friendlyId = entry.display_name.replace(/\s+/g, "");
+      expect(cache.configs[entry.key]?.key).toBe(entry.key);
+      expect(cache.configs[friendlyId]?.key).toBe(entry.key);
+    }
   });
 
   it("keeps only enabled service models without adding auto as a fallback", async () => {
@@ -50,8 +67,8 @@ describe("Qoder model cache", () => {
 
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
 
-    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
-    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["ultimate", "lite"]);
+    const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
+    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["Ultimate", "Lite"]);
     expect(cache.models.some((model: { id: string }) => model.id === "auto")).toBe(false);
   });
 
@@ -66,13 +83,13 @@ describe("Qoder model cache", () => {
 
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
 
-    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
-    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["cmodel"]);
+    const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
+    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["Cantus"]);
   });
 
   it("filters auto from a legacy fallback cache when the service did not enable it", () => {
     writeFileSync(
-      CACHE_PATH,
+      CACHE_PATHS.global,
       JSON.stringify({
         updatedAt: Date.now(),
         models: [{ id: "auto" }, { id: "ultimate" }],
@@ -98,7 +115,7 @@ describe("Qoder model cache", () => {
 
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
 
-    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
     expect(cache.models[0].contextWindow).toBe(1_000_000);
   });
 
@@ -123,7 +140,7 @@ describe("Qoder model cache", () => {
 
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
 
-    const cache = JSON.parse(readFileSync(CACHE_PATH, "utf8"));
+    const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
     expect(cache.models[0].contextWindow).toBe(200000);
   });
 });
