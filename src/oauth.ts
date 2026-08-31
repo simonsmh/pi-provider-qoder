@@ -3,10 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
-import { getMachineId, getQoderMode, getQoderRefreshURL, isQoderCNMode } from "./cosy.js";
+import { getMachineId, getQoderMode, getQoderRefreshURL, getQoderUserEmailFallback, isQoderCNMode } from "./cosy.js";
 import { interactiveLogin } from "./login.js";
 import { updateQoderModelsCache } from "./models.js";
-import { credentialsFromPat, decodePatRefresh, isPatRefresh } from "./pat.js";
+import { credentialsFromPat, decodePatRefresh, fetchUserInfo, isPatRefresh } from "./pat.js";
 
 export interface QoderCredentials extends OAuthCredentials {
   userID: string;
@@ -93,7 +93,46 @@ export function getCachedCredentials(_accessToken: string, providerID = "qoder")
   return null;
 }
 
+const identityCache = new Map<string, QoderCredentials>();
+
+/**
+ * Resolve the Qoder identity (userID/email/name/machineID) for a chat request.
+ * OMP (17.x) persists login credentials in its own agent.db, not in
+ * ~/.pi/agent/auth.json, so the provider-side cache is frequently empty and the
+ * COSY payload would fall back to uid "qoder-user" -> Qoder CN rejects it with
+ * "Login expired" (105). Fetch the identity from the job token when the cache
+ * misses (in-memory cached), and persist it so later requests skip the fetch.
+ */
+export async function resolveQoderIdentity(
+  accessToken: string,
+  providerID: string,
+  mode: string,
+): Promise<QoderCredentials> {
+  const cached = getCachedCredentials(accessToken, providerID);
+  if (cached?.userID) return cached;
+
+  const cacheKey = `${providerID}:${accessToken}`;
+  const mem = identityCache.get(cacheKey);
+  if (mem?.userID) return mem;
+
+  const info = await fetchUserInfo(accessToken, mode);
+  const machineID = getMachineId();
+  const creds: QoderCredentials = {
+    access: accessToken,
+    userID: info.userID || "qoder-user",
+    email: info.email || getQoderUserEmailFallback(mode),
+    name: info.name || (isQoderCNMode(mode) ? "Qoder CN User" : "Qoder User"),
+    machineID,
+    refresh: "",
+    expires: 0,
+  };
+  identityCache.set(cacheKey, creds);
+  saveCredentialsToAuthFile(providerID, creds);
+  return creds;
+}
+
 async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): Promise<OAuthCredentials> {
+  const providerID = isQoderCNMode(mode) ? "qoder-cn" : "qoder";
   // 1. Try environment variables first (PAT). A PAT (pt-...) must be exchanged
   //    for a short-lived job token before it can be used — credentialsFromPat
   //    handles the exchange + identity resolution.
@@ -102,9 +141,14 @@ async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): 
     try {
       const creds = await credentialsFromPat(pat, mode);
       const qCreds = creds as QoderCredentials;
-      // pi persists these credentials in auth.json itself; no separate cache needed.
+      // Persist the resolved identity locally so chat requests can resolve the real uid.
       // Cache models in background
       updateQoderModelsCache(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode).catch(() => {});
+      // Persist the resolved identity locally. OMP (17.x) stores login
+      // credentials in its own agent.db, not in ~/.pi/agent/auth.json, so
+      // without this the chat COSY payload would fall back to uid "qoder-user"
+      // and Qoder CN rejects it with "Login expired" (105).
+      saveCredentialsToAuthFile(providerID, creds);
       return creds;
     } catch {
       // Fall through to interactive login if PAT exchange fails.
@@ -114,12 +158,14 @@ async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: string): 
   // 2. Interactive login (CN only supports PAT prompt here; global supports device flow fallback)
   const creds = await interactiveLogin(callbacks, mode);
 
-  // Cache models in background. pi persists the credentials in auth.json itself.
+  // Cache models in background.
   try {
     const qCreds = creds as QoderCredentials;
     updateQoderModelsCache(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode).catch(() => {});
   } catch {}
 
+  // Persist the resolved identity locally (see note above).
+  saveCredentialsToAuthFile(providerID, creds);
   return creds;
 }
 
