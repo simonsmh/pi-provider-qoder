@@ -3,8 +3,6 @@ import {
   getQoderBaseUrl,
   getQoderCenterUrl,
   getQoderChatURL,
-  getQoderCNDirectModel,
-  getQoderCNFriendlyModelInfo,
   getQoderExchangeURL,
   getQoderManageUrl,
   getQoderMode,
@@ -15,7 +13,7 @@ import {
   getQoderUserEmailFallback,
   getQoderUserInfoURL,
   isQoderCNMode,
-  toQoderCNFriendlyModel,
+  toQoderCNModelId,
 } from "../cosy.js";
 
 // ── getQoderMode ──────────────────────────────────────────────────────────
@@ -160,83 +158,23 @@ describe("getQoderUserEmailFallback", () => {
   });
 });
 
-// ── getQoderCNDirectModel ─────────────────────────────────────────────────
+// ── toQoderCNModelId ──────────────────────────────────────────────────────
 
-describe("getQoderCNDirectModel", () => {
-  it("maps known model IDs to internal keys", () => {
-    expect(getQoderCNDirectModel("qoder-cn")).toBe("auto");
-    expect(getQoderCNDirectModel("qwen3.7-max")).toBe("qmodel_latest");
-    expect(getQoderCNDirectModel("qwen3.7-plus")).toBe("qmodel");
-    expect(getQoderCNDirectModel("qwen3.6-plus")).toBe("qmodel");
-    expect(getQoderCNDirectModel("qwen3.6-flash")).toBe("q36fmodel");
-    expect(getQoderCNDirectModel("deepseek-v4-pro")).toBe("dmodel");
-    expect(getQoderCNDirectModel("deepseek-v4-flash")).toBe("dfmodel");
-    expect(getQoderCNDirectModel("glm-5.2")).toBe("gm51model");
-    expect(getQoderCNDirectModel("glm-5.1")).toBe("gm51model");
-    expect(getQoderCNDirectModel("kimi-k2.6")).toBe("kmodel");
-    expect(getQoderCNDirectModel("minimax-m2.7")).toBe("mmodel");
-    expect(getQoderCNDirectModel("minimax-m3")).toBe("mmodel");
+describe("toQoderCNModelId", () => {
+  it("strips whitespace from the upstream display_name", () => {
+    // The display name is used directly as the pi-visible model id, with
+    // whitespace removed so it stays a clean token for persistence keys and
+    // search. "Qwen3.8-Flash" has no spaces already.
+    expect(toQoderCNModelId("Qwen3.8-Flash")).toBe("Qwen3.8-Flash");
   });
 
-  it("returns the input ID for unknown models", () => {
-    expect(getQoderCNDirectModel("custom-model")).toBe("custom-model");
+  it("collapses internal spaces", () => {
+    expect(toQoderCNModelId("Qwen 3.8 Max")).toBe("Qwen3.8Max");
+    expect(toQoderCNModelId("DeepSeek V4 Pro")).toBe("DeepSeekV4Pro");
   });
 
-  it('defaults to "auto" when no input', () => {
-    expect(getQoderCNDirectModel()).toBe("auto");
-    expect(getQoderCNDirectModel("")).toBe("auto");
-  });
-});
-
-// ── getQoderCNFriendlyModelInfo ───────────────────────────────────────────
-
-describe("getQoderCNFriendlyModelInfo", () => {
-  it("returns known friendly info for mapped keys", () => {
-    const info = getQoderCNFriendlyModelInfo("qmodel_latest");
-    expect(info.id).toBe("qwen3.7-max");
-    expect(info.name).toBe("Qwen 3.7 Max · Qoder CN");
-  });
-
-  it("returns auto mapping", () => {
-    const info = getQoderCNFriendlyModelInfo("auto");
-    expect(info.id).toBe("auto");
-    expect(info.name).toBe("Auto · Qoder CN");
-  });
-
-  it("generates friendly name for unknown keys", () => {
-    const info = getQoderCNFriendlyModelInfo("my-custom-model", "My Custom Model");
-    expect(info.id).toBe("my-custom-model");
-    expect(info.name).toContain("Qoder CN");
-  });
-
-  it("prettifies model names with version numbers", () => {
-    const info = getQoderCNFriendlyModelInfo("some-model", "Qwen3.7-New");
-    expect(info.name).toContain("Qwen 3.7");
-    expect(info.name).toContain("Qoder CN");
-  });
-});
-
-// ── toQoderCNFriendlyModel ────────────────────────────────────────────────
-
-describe("toQoderCNFriendlyModel", () => {
-  it("maps known model ID to friendly version", () => {
-    const result = toQoderCNFriendlyModel({ id: "qmodel_latest", name: "Original Name" });
-    expect(result.id).toBe("qwen3.7-max");
-    expect(result.name).toBe("Qwen 3.7 Max · Qoder CN");
-  });
-
-  it("preserves extra fields", () => {
-    const result = toQoderCNFriendlyModel({ id: "auto", name: "Auto", extra: "field" } as {
-      id: string;
-      name: string;
-      extra: string;
-    });
-    expect(result.extra).toBe("field");
-  });
-
-  it("handles unknown models by prettifying display name", () => {
-    const result = toQoderCNFriendlyModel({ id: "custom", name: "CustomModel V2-Pro" });
-    expect(result.id).toBe("custom");
-    expect(result.name).toContain("Qoder CN");
+  it("falls back to a default when no display name is given", () => {
+    expect(toQoderCNModelId()).toBe("QoderCNModel");
+    expect(toQoderCNModelId("")).toBe("QoderCNModel");
   });
 });

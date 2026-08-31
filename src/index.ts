@@ -1,12 +1,6 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import {
-  getQoderBaseUrl,
-  getQoderMode,
-  getQoderUserEmailFallback,
-  isQoderCNMode,
-  toQoderCNFriendlyModel,
-} from "./cosy.js";
+import { getQoderBaseUrl, getQoderMode, getQoderUserEmailFallback, isQoderCNMode } from "./cosy.js";
 import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./models.js";
 import {
   autoLoginQoderFromEnvironment,
@@ -29,14 +23,11 @@ function modelsForProvider(mode: string, providerID: string): Model<Api>[] {
   const cached = getCachedModels(mode);
   const modelsToUse = cached.length > 0 ? cached : isQoderCNMode(mode) ? staticCnModels : staticModels;
 
-  return modelsToUse.map((m) => {
-    const model = isQoderCNMode(mode) ? toQoderCNFriendlyModel(m) : m;
-    return {
-      ...model,
-      provider: providerID,
-      baseUrl: getQoderBaseUrl(mode),
-    };
-  }) as unknown as Model<Api>[];
+  return modelsToUse.map((m) => ({
+    ...m,
+    provider: providerID,
+    baseUrl: getQoderBaseUrl(mode),
+  })) as unknown as Model<Api>[];
 }
 
 function createQoderOAuth(providerID: string, mode: string): OAuthConfigWithUsage {

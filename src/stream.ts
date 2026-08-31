@@ -1,26 +1,26 @@
 import crypto from "node:crypto";
-import type {
-  Api,
-  AssistantMessage,
-  AssistantMessageEventStream,
-  Context,
-  Model,
-  SimpleStreamOptions,
-  TextContent,
-  ThinkingContent,
-  ToolCall,
-} from "@earendil-works/pi-ai";
 import * as PiAi from "@earendil-works/pi-ai";
+import {
+  type Api,
+  type AssistantMessage,
+  type AssistantMessageEventStream,
+  type Context,
+  clampThinkingLevel,
+  type Model,
+  type SimpleStreamOptions,
+  type TextContent,
+  type ThinkingContent,
+  type ToolCall,
+} from "@earendil-works/pi-ai";
 import {
   buildAuthHeaders,
   getMachineId,
   getQoderChatURL,
-  getQoderCNDirectModel,
   getQoderMode,
   getQoderUserEmailFallback,
   isQoderCNMode,
 } from "./cosy.js";
-import { getCachedModelConfig } from "./models.js";
+import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "./models.js";
 import { getCachedCredentials } from "./oauth.js";
 import { qoderEncodeBody } from "./qoder-encoding.js";
 import { stripThinkingTags, ThinkingTagParser } from "./thinking-parser.js";
@@ -120,21 +120,21 @@ export function streamQoder(
       const email = cachedCreds?.email || getQoderUserEmailFallback(providerMode);
       const machineID = cachedCreds?.machineID || getMachineId();
 
-      const qoderModel = isQoderCNMode(providerMode) ? getQoderCNDirectModel(model.id) : model.id;
-      const modelConfig = getCachedModelConfig(qoderModel, providerMode) || {
-        key: qoderModel,
-        is_reasoning:
-          qoderModel === "ultimate" ||
-          qoderModel === "performance" ||
-          qoderModel.includes("dmodel") ||
-          qoderModel.includes("dfmodel"),
-        max_output_tokens: 32768,
+      // The model `id` pi exposes is the upstream display_name (whitespace
+      // stripped) for CN, or the raw key for the international site. The
+      // request-time upstream `key` is read back from the cached model config
+      // (which stores the original entry keyed by both `key` and `id`), so no
+      // key<->friendlyId mapping table is needed here.
+      const modelConfig = getCachedModelConfig(model.id, providerMode) || {
+        key: model.id,
+        is_reasoning: false,
         source: "system",
       };
-      modelConfig.key = qoderModel;
+      // Use the cached entry's original upstream key when available; fall back to
+      // the pi id (international site already uses the key as id).
+      const qoderModel = modelConfig.key || model.id;
 
       const isReasoning = !!modelConfig.is_reasoning;
-      const maxOutputTokens = modelConfig.max_output_tokens || 32768;
 
       const normalizedMessages = transformMessagesForQoder(context.messages);
       const systemText = context.systemPrompt || "";
@@ -161,16 +161,50 @@ export function streamQoder(
         ? `${stablePart}-${options.sessionId}`
         : `${stablePart}-${crypto.randomUUID()}`;
 
-      let maxTokens = 32768;
-      if (maxOutputTokens > 0) {
-        maxTokens = maxOutputTokens;
-      }
+      // Qoder's catalog exposes no per-model output cap, so we use the
+      // documented upstream ceiling (MAX_OUTPUT_TOKENS = 131072, see models.ts)
+      // and let pi cap it lower when the caller sets options.maxTokens (e.g.
+      // compaction at 40K). This avoids truncating reasoning chains / long
+      // generations that the 32K default would cut off.
+      let maxTokens = MAX_OUTPUT_TOKENS;
       if (options?.maxTokens && options.maxTokens < maxTokens) {
         maxTokens = options.maxTokens;
       }
 
       const toolsRaw = context.tools && context.tools.length > 0 ? transformTools(context.tools) : undefined;
       const recordID = stableChatRecordID(qoderModel, normalizedMessages, toolsRaw, maxTokens);
+
+      // Map pi's thinking level (options.reasoning) to Qoder's request fields.
+      // Confirmed from @qoder-ai/qodercli: the chat body carries `reasoning_effort`
+      // ("none"|"low"|"medium"|"high"|"xhigh"|"max") and `enable_thinking` (bool)
+      // inside `parameters`, alongside `max_tokens`.
+      //
+      // This mirrors the pattern the pi-ai OpenAI provider uses: clamp the
+      // requested level to what the model advertises via thinkingLevelMap, then
+      // map to the upstream effort name. clampThinkingLevel returns "off" when
+      // the level is unsupported or the user disabled thinking.
+      const requestedLevel = options?.reasoning;
+      const clamped = requestedLevel ? clampThinkingLevel(model, requestedLevel) : undefined;
+      const reasoningLevel = clamped === "off" ? undefined : clamped;
+      const parameters: Record<string, unknown> = { max_tokens: maxTokens };
+      if (reasoningLevel) {
+        parameters.enable_thinking = true;
+        // Effort-based models advertise concrete effort names in the map
+        // (low/medium/xhigh/max). Toggle-only models map every level to
+        // "enabled"/"disabled" and accept no effort value — only the on/off
+        // switch matters, so we send enable_thinking alone.
+        const mapped = model.thinkingLevelMap?.[reasoningLevel];
+        const effort = mapped && mapped !== "enabled" && mapped !== "disabled" ? mapped : reasoningLevel;
+        // Only send reasoning_effort when the upstream model actually exposes
+        // effort levels (thinking_config.enabled.efforts).
+        if (modelConfig?.thinking_config?.enabled?.efforts && typeof effort === "string") {
+          parameters.reasoning_effort = effort;
+        }
+      } else {
+        // No reasoning level selected (or clamped to off): explicitly disable
+        // thinking so the model does not reason by default.
+        parameters.enable_thinking = false;
+      }
 
       const reqBody: Record<string, unknown> = {
         request_id: crypto.randomUUID(),
@@ -196,7 +230,7 @@ export function streamQoder(
         system: "",
         messages: systemText ? [{ role: "system", content: systemText }, ...normalizedMessages] : normalizedMessages,
         tools: toolsRaw || [],
-        parameters: { max_tokens: maxTokens },
+        parameters,
         chat_context: {
           chatPrompt: "",
           imageUrls: null,
