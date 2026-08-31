@@ -5,8 +5,9 @@ import {
   getCachedModelConfig,
   staticCnModels,
   staticModels,
+  toQoderModelId,
   ZERO_COST,
-} from "../models.js";
+} from "../catalog.js";
 
 // ── staticModels ──────────────────────────────────────────────────────────
 
@@ -56,10 +57,11 @@ describe("staticModels", () => {
     expect(staticModels.find((m) => m.upstreamKey === "kmodel")?.contextWindow).toBe(256000);
   });
 
-  it("maps friendly ids and legacy keys to the same static upstream key", () => {
+  it("maps friendly ids to static upstream keys without raw-key aliases", () => {
     expect(getCachedModelConfig("Lite", "global")?.key).toBe("lite");
-    expect(getCachedModelConfig("lite", "global")?.key).toBe("lite");
     expect(getCachedModelConfig("Qwen3.8-Max", "global")?.key).toBe("qmodel_preview");
+    expect(getCachedModelConfig("lite", "global")).toBeNull();
+    expect(getCachedModelConfig("qmodel_preview", "global")).toBeNull();
   });
 });
 
@@ -94,6 +96,13 @@ describe("staticCnModels", () => {
   it("has unique IDs", () => {
     const ids = staticCnModels.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("uses friendly IDs only in both static region catalogs", () => {
+    for (const model of [...staticModels, ...staticCnModels]) {
+      expect(model.id).toBe(toQoderModelId(model.name));
+      expect(model.id).not.toBe(model.upstreamKey);
+    }
   });
 
   it("every CN model has a description", () => {
@@ -132,6 +141,19 @@ describe("contextWindowFromCatalog", () => {
 
   it("falls back to 1M when the catalog omits context_config", () => {
     expect(contextWindowFromCatalog({ key: "lite", max_input_tokens: 180000 })).toBe(DEFAULT_CONTEXT_WINDOW);
+  });
+});
+
+describe("toQoderModelId", () => {
+  it("strips whitespace from catalog display names", () => {
+    expect(toQoderModelId("Qwen3.8-Flash")).toBe("Qwen3.8-Flash");
+    expect(toQoderModelId("Qwen 3.8 Max")).toBe("Qwen3.8Max");
+    expect(toQoderModelId("DeepSeek V4 Pro")).toBe("DeepSeekV4Pro");
+  });
+
+  it("uses a stable fallback when the display name is absent", () => {
+    expect(toQoderModelId()).toBe("QoderModel");
+    expect(toQoderModelId("")).toBe("QoderModel");
   });
 });
 

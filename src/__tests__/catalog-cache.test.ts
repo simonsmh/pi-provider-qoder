@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCachedModels, updateQoderModelsCache } from "../models.js";
+import { getCachedModelConfig, getCachedModels, updateQoderModelsCache } from "../catalog.js";
 import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
 const CACHE_PATHS = {
@@ -44,9 +44,35 @@ describe("Qoder model cache", () => {
     const catalog = interaction.response.body as { chat: Array<{ key: string; display_name: string }> };
     for (const entry of catalog.chat) {
       const friendlyId = entry.display_name.replace(/\s+/g, "");
-      expect(cache.configs[entry.key]?.key).toBe(entry.key);
       expect(cache.configs[friendlyId]?.key).toBe(entry.key);
+      expect(cache.configs[entry.key]).toBeUndefined();
+      expect(getCachedModelConfig(friendlyId, region)?.key).toBe(entry.key);
+      expect(getCachedModelConfig(entry.key, region)).toBeNull();
     }
+  });
+
+  it("does not register raw live-catalog keys as public model ids", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            chat: [
+              { key: "lite", enable: true, display_name: "Lite" },
+              { key: "qfmodel", enable: true, display_name: "Qwen3.8-Flash" },
+            ],
+          }),
+      }),
+    );
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+    expect(getCachedModels("global").map((model) => model.id)).toEqual(["Lite", "Qwen3.8-Flash"]);
+    expect(getCachedModelConfig("Lite", "global")?.key).toBe("lite");
+    expect(getCachedModelConfig("Qwen3.8-Flash", "global")?.key).toBe("qfmodel");
+    expect(getCachedModelConfig("lite", "global")).toBeNull();
+    expect(getCachedModelConfig("qfmodel", "global")).toBeNull();
   });
 
   it("keeps only enabled service models without adding auto as a fallback", async () => {
@@ -99,7 +125,7 @@ describe("Qoder model cache", () => {
       "utf8",
     );
 
-    expect(getCachedModels("global").map((model) => model.id)).toEqual(["ultimate"]);
+    expect(getCachedModels("global").map((model) => model.id)).toEqual(["Ultimate"]);
   });
 
   it("records a 1M context window when the catalog omits context_config", async () => {

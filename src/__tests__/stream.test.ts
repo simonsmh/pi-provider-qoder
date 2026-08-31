@@ -8,13 +8,13 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamQoder } from "../stream.js";
+import { streamQoder } from "../protocol/stream.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
 // Pin the identity so the mocked fetch below only ever serves the chat request.
 // Without a resolved identity, streamQoder fetches /userinfo first and consumes
 // the mock response, leaving the chat read to fail on a locked stream.
-vi.mock("../oauth.js", () => ({
+vi.mock("../auth/oauth.js", () => ({
   resolveQoderIdentity: vi.fn().mockResolvedValue({
     access: "fake",
     userID: "test-user",
@@ -93,8 +93,8 @@ function mockFetch(body: string): typeof fetch {
   return vi.fn(async () => response) as unknown as typeof fetch;
 }
 
-function makeModel(provider = "qoder"): Model<Api> {
-  return { id: "ultimate", api: "qoder-api" as Api, provider } as Model<Api>;
+function makeModel(provider = "qoder", id = "Lite"): Model<Api> {
+  return { id, api: "qoder-api" as Api, provider } as Model<Api>;
 }
 
 function makeContext(): Context {
@@ -135,6 +135,32 @@ describe("streamQoder", () => {
     expect(msg.stopReason).toBe("stop");
     const text = msg.content.find((c) => c.type === "text");
     expect(text && "text" in text ? text.text : "").toBe("OK");
+  });
+
+  it("sends the internal upstream key for a friendly model id", async () => {
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(streamQoder(makeModel("qoder", "Lite"), makeContext(), { apiKey: "fake" }));
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    expect(init?.headers).toEqual(expect.objectContaining({ "X-Model-Key": "lite" }));
+
+    const custom = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
+    const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const encoded = Buffer.from(init?.body as Uint8Array).toString("utf8");
+    const rearranged = [...encoded]
+      .map((character) => (character === "$" ? "=" : standard[custom.indexOf(character)] || character))
+      .join("");
+    const third = Math.floor(rearranged.length / 3);
+    const base64 =
+      rearranged.slice(rearranged.length - third) +
+      rearranged.slice(third, rearranged.length - third) +
+      rearranged.slice(0, third);
+    const body = JSON.parse(Buffer.from(base64, "base64").toString("utf8")) as {
+      chat_context: { extra: { modelConfig: { key: string } } };
+      model_config: { key: string };
+    };
+    expect(body.chat_context.extra.modelConfig.key).toBe("lite");
+    expect(body.model_config.key).toBe("lite");
   });
 
   it("binds chat hosts to provider ids even when only a CN PAT is set", async () => {

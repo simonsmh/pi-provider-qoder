@@ -136,9 +136,9 @@ async function recordRegion(region: Region, pat: string): Promise<void> {
     return response;
   }) as typeof fetch;
 
-  const { credentialsFromPat } = await import("../src/pat.js");
-  const { getCachedModelConfig, getCachedModels, updateQoderModelsCache } = await import("../src/models.js");
-  const { streamQoder } = await import("../src/stream.js");
+  const { credentialsFromPat } = await import("../src/auth/pat.js");
+  const { getCachedModelConfig, getCachedModels, updateQoderModelsCache } = await import("../src/catalog.js");
+  const { streamQoder } = await import("../src/protocol/stream.js");
 
   const credentials = (await credentialsFromPat(pat, region)) as unknown as {
     access: string;

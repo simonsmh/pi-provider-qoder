@@ -2,15 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
+import { buildAuthHeaders } from "./cosy.js";
 import {
-  buildAuthHeaders,
   getQoderBaseUrl,
-  getQoderMode,
   getQoderModelListURL,
   getQoderRegionConfig,
-  isQoderCNMode,
-  toQoderModelId,
-} from "./cosy.js";
+  type QoderMode,
+} from "./region.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
@@ -71,8 +69,16 @@ export interface QoderModelDef {
   description?: string;
 }
 
-function getQoderCachePath(mode?: string): string {
+function getQoderCachePath(mode: QoderMode): string {
   return join(homedir(), ".pi", "agent", getQoderRegionConfig(mode).modelCacheFile);
+}
+
+/**
+ * Derive the only public model id from Qoder's display name.
+ * The upstream key remains available solely inside the matching config entry.
+ */
+export function toQoderModelId(displayName?: string): string {
+  return (displayName || "QoderModel").replace(/\s+/g, "");
 }
 
 export const staticModels: QoderModelDef[] = [
@@ -478,7 +484,7 @@ function buildThinkingLevelMap(entry: QoderModelEntry): ThinkingLevelMap | undef
   return undefined;
 }
 
-export function getCachedModels(mode?: string): QoderModelDef[] {
+export function getCachedModels(mode: QoderMode): QoderModelDef[] {
   const cachePath = getQoderCachePath(mode);
   if (existsSync(cachePath)) {
     try {
@@ -487,7 +493,12 @@ export function getCachedModels(mode?: string): QoderModelDef[] {
         const models = data.models.map((model: QoderModelDef) => {
           const config = data.configs?.[model.id] as QoderModelEntry | undefined;
           const display = config?.display_name;
-          return display ? { ...model, id: toQoderModelId(display), name: display } : model;
+          const staticModel = (mode === "cn" ? staticCnModels : staticModels).find(
+            (seed) => seed.upstreamKey === model.id,
+          );
+          if (display) return { ...model, id: toQoderModelId(display), name: display };
+          if (staticModel) return { ...model, id: staticModel.id, name: staticModel.name };
+          return model.name ? { ...model, id: toQoderModelId(model.name) } : model;
         });
         // Older releases injected `auto` without a corresponding service config.
         // Keep an explicitly enabled service model, but drop the legacy fallback.
@@ -498,38 +509,42 @@ export function getCachedModels(mode?: string): QoderModelDef[] {
       }
     } catch {}
   }
-  return isQoderCNMode(mode) ? staticCnModels : staticModels;
+  return mode === "cn" ? staticCnModels : staticModels;
 }
 
-export function getCachedModelConfig(modelKey: string, mode?: string): QoderModelEntry | null {
+export function getCachedModelConfig(modelId: string, mode: QoderMode): QoderModelEntry | null {
   const cachePath = getQoderCachePath(mode);
   if (existsSync(cachePath)) {
     try {
       const data = JSON.parse(readFileSync(cachePath, "utf8"));
-      if (data?.configs?.[modelKey]) {
-        return withMaxContextAsDefault(data.configs[modelKey] as QoderModelEntry);
+      const direct = data?.configs?.[modelId] as QoderModelEntry | undefined;
+      if (direct && toQoderModelId(direct.display_name) === modelId) {
+        return withMaxContextAsDefault(direct);
+      }
+
+      // Read old cache shapes without preserving their raw-key aliases.
+      const legacyEntry = Object.values(data?.configs || {}).find(
+        (entry) =>
+          entry &&
+          typeof entry === "object" &&
+          toQoderModelId((entry as QoderModelEntry).display_name) === modelId,
+      ) as QoderModelEntry | undefined;
+      if (legacyEntry) {
+        return withMaxContextAsDefault(legacyEntry);
       }
     } catch {}
   }
 
-  // Static catalogs expose friendly ids too. Preserve raw keys as request-time
-  // aliases so older commands and persisted selections continue to work.
-  const staticModel = (isQoderCNMode(mode) ? staticCnModels : staticModels).find(
-    (model) => model.id.toLowerCase() === modelKey.toLowerCase() || model.upstreamKey === modelKey,
-  );
+  const staticModel = (mode === "cn" ? staticCnModels : staticModels).find((model) => model.id === modelId);
   if (staticModel) {
     return {
-      key: staticModel.upstreamKey || modelKey,
+      key: staticModel.upstreamKey || modelId,
       is_reasoning: staticModel.reasoning,
       source: "system",
     };
   }
 
-  return {
-    key: modelKey,
-    is_reasoning: false,
-    source: "system",
-  };
+  return null;
 }
 
 /** Resolve contextWindow from a catalog entry. Exported for tests. */
@@ -568,7 +583,7 @@ function withMaxContextAsDefault(entry: QoderModelEntry): QoderModelEntry {
   };
 }
 
-export function isCacheStale(mode?: string): boolean {
+export function isCacheStale(mode: QoderMode): boolean {
   const cachePath = getQoderCachePath(mode);
   if (!existsSync(cachePath)) return true;
   try {
@@ -586,7 +601,7 @@ export async function updateQoderModelsCache(
   userID: string,
   name: string,
   email: string,
-  mode: string = getQoderMode(),
+  mode: QoderMode,
 ): Promise<void> {
   const modelListURL = getQoderModelListURL(mode);
   try {
@@ -631,13 +646,12 @@ export async function updateQoderModelsCache(
       const isReasoning = !!entry.is_reasoning || !!entry.thinking_config;
       const supportsEffort = !!entry.thinking_config?.enabled?.efforts;
       const thinkingLevelMap = buildThinkingLevelMap(entry);
-      // Both regions expose display_name (whitespace-stripped) as the pi-visible
-      // id. The original key remains indexed in configs for request-time lookup
-      // and compatibility with old CLI/persisted model references.
+      // Both regions expose display_name (whitespace-stripped) as the sole
+      // pi-visible id. The config stores the upstream key under that id for
+      // request-time use.
       const modelInfo = { id: toQoderModelId(display), name: display };
 
-      configs[key] = entry;
-      if (modelInfo.id !== key) configs[modelInfo.id] = entry;
+      configs[modelInfo.id] = entry;
 
       newModels.push({
         id: modelInfo.id,

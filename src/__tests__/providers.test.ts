@@ -1,7 +1,6 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const originalRegion = process.env.QODER_REGION;
 const patEnvNames = [
   "QODER_API_KEY",
   "QODER_PERSONAL_ACCESS_TOKEN",
@@ -13,8 +12,6 @@ const patEnvNames = [
 const originalPats = Object.fromEntries(patEnvNames.map((name) => [name, process.env[name]]));
 
 afterEach(() => {
-  if (originalRegion === undefined) delete process.env.QODER_REGION;
-  else process.env.QODER_REGION = originalRegion;
   for (const name of patEnvNames) {
     const value = originalPats[name];
     if (value === undefined) delete process.env[name];
@@ -25,8 +22,7 @@ afterEach(() => {
 });
 
 describe("provider region binding", () => {
-  it("keeps qoder global and qoder-cn in CN when QODER_REGION=cn", async () => {
-    process.env.QODER_REGION = "cn";
+  it("binds qoder to global and qoder-cn to CN", async () => {
     for (const name of patEnvNames) delete process.env[name];
     const providers = new Map<string, Record<string, unknown>>();
     const pi = {

@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { stripThinkingTags, ThinkingTagParser } from "../thinking-parser.js";
+import { stripThinkingTags, ThinkingTagParser } from "../protocol/thinking.js";
 
 function createMockStream() {
   const events: AssistantMessageEvent[] = [];

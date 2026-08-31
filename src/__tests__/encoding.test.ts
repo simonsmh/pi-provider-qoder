@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { qoderEncodeBody } from "../qoder-encoding.js";
+import { qoderEncodeBody } from "../protocol/encoding.js";
 
 describe("qoderEncodeBody", () => {
   it("encodes a simple string", () => {

@@ -1,13 +1,11 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
+import { getMachineId, QODER_CLIENT_TYPE, QODER_OPENAPI_COSY_VERSION } from "../cosy.js";
 import {
-  getMachineId,
   getQoderExchangeURL,
-  getQoderMode,
   getQoderRegionConfig,
   getQoderUserInfoURL,
-  QODER_CLIENT_TYPE,
-  QODER_OPENAPI_COSY_VERSION,
-} from "./cosy.js";
+  type QoderMode,
+} from "../region.js";
 
 const UA = "pi-provider-qoder";
 
@@ -57,7 +55,7 @@ export function decodePatRefresh(refresh: string): {
  *   POST /api/v1/jobToken/exchange { personal_token } -> { token, refresh_token, expires_at }
  * The exchange endpoint does not require a COSY signature.
  */
-export async function exchangeJobToken(pat: string, mode: string = getQoderMode()): Promise<PatExchangeResult> {
+export async function exchangeJobToken(pat: string, mode: QoderMode): Promise<PatExchangeResult> {
   const res = await fetch(getQoderExchangeURL(mode), {
     method: "POST",
     headers: {
@@ -105,7 +103,7 @@ export async function exchangeJobToken(pat: string, mode: string = getQoderMode(
 /** Fetch user profile using a job token (jt-...). Best-effort. */
 export async function fetchUserInfo(
   jobToken: string,
-  mode: string,
+  mode: QoderMode,
 ): Promise<{ userID: string; email: string; name: string }> {
   let userID = "";
   let email = "";
@@ -140,7 +138,7 @@ export async function fetchUserInfo(
  * Exchanges the PAT for a job token, resolves identity, and encodes the PAT
  * into the refresh field so the token can be re-exchanged on expiry.
  */
-export async function credentialsFromPat(pat: string, mode: string = getQoderMode()): Promise<OAuthCredentials> {
+export async function credentialsFromPat(pat: string, mode: QoderMode): Promise<OAuthCredentials> {
   const region = getQoderRegionConfig(mode);
   const { jobToken, jobRefreshToken, expiresAt } = await exchangeJobToken(pat, mode);
   const { userID, email, name } = await fetchUserInfo(jobToken, mode);

@@ -6,7 +6,7 @@ A [pi](https://shittycodingagent.ai/) provider extension that connects pi to the
 
 - **Two provider entries**:
   - `qoder` — Global / international Qoder.
-  - `qoder-cn` — Qoder China, forced to CN endpoints and independent of `QODER_REGION`.
+  - `qoder-cn` — Qoder China, always bound to CN endpoints.
 - **Interactive Login**: Global Qoder supports browser device-code flow or Personal Access Token (PAT) login.
 - **Qoder CN PAT Login**: China edition uses a separate PAT login entry (`/login qoder-cn`) and CN token exchange endpoints.
 - **WAF Bypass**: Built-in WAF obfuscation and body encoding (`Encode=1`).
@@ -64,18 +64,6 @@ Qoder China:
 > The exchanged job token is short-lived; the provider transparently re-exchanges
 > the stored PAT when it expires.
 
-### Region environment variables
-
-The provider also understands these optional variables:
-
-```bash
-export QODER_REGION=cn       # or QODER_BACKEND=cn / QODER_MODE=cn
-```
-
-Setting a CN PAT without a global PAT also auto-selects CN mode for the `qoder`
-entry, but the recommended explicit China entry is still `/login qoder-cn` and
-`--provider qoder-cn`.
-
 ## Endpoints
 
 Global:
@@ -112,9 +100,9 @@ removed), including:
   - `Kimi-K3`
   - `MiniMax-M3`
 
-The original service keys remain compatibility aliases, so existing commands
-such as `--model lite` and references such as `qoder/lite` still send the
-upstream `lite` key.
+Only these friendly IDs are public. Service keys such as `lite`, `qfmodel`, and
+`qmodel` cannot be selected with `--model`; the provider maps the chosen
+friendly ID to its internal service key only when sending a request.
 
 Global models default to a 1M context window, matching the Qoder API (verified
 against `lite` with prompts up to 1,000K tokens). `kmodel` stays at the 256K its
@@ -128,31 +116,28 @@ internal keys at request time:
 
 | Friendly ID | Qoder CN key | Context | Images | Reasoning |
 | --- | --- | ---: | :---: | :---: |
-| `auto` | `auto` | 200K | ✅ | ✅ |
-| `qwen3.7-max` | `qmodel_latest` | 1M | ✅ | ✅ |
-| `qwen3.7-plus` | `qmodel` | 1M | ❌ | ✅ |
-| `qwen3.6-flash` | `q36fmodel` | 1M | ❌ | ✅ |
-| `deepseek-v4-pro` | `dmodel` | 1M | ❌ | ✅ |
-| `deepseek-v4-flash` | `dfmodel` | 1M | ❌ | ❌ |
-| `glm-5.2` | `gm51model` | 200K | ✅ | ✅ |
-| `kimi-k2.6` | `kmodel` | 256K | ✅ | ✅ |
-| `minimax-m2.7` | `mmodel` | 200K | ❌ | ❌ |
-
-Compatibility aliases are also accepted for request mapping, such as
-`qwen3.6-plus` → `qmodel`, `glm-5.1` → `gm51model`, and `minimax-m3` → `mmodel`.
+| `Auto` | `auto` | 200K | ✅ | ✅ |
+| `Qwen3.7-Max` | `qmodel_latest` | 1M | ✅ | ✅ |
+| `Qwen3.7-Plus` | `qmodel` | 1M | ❌ | ✅ |
+| `Qwen3.6-Flash` | `q36fmodel` | 1M | ❌ | ✅ |
+| `DeepSeek-V4-Pro` | `dmodel` | 1M | ❌ | ✅ |
+| `DeepSeek-V4-Flash` | `dfmodel` | 1M | ❌ | ❌ |
+| `GLM-5.2` | `gm51model` | 200K | ✅ | ✅ |
+| `Kimi-K2.7-Code` | `kmodel` | 256K | ✅ | ✅ |
+| `MiniMax-M2.7` | `mmodel` | 200K | ❌ | ❌ |
 
 ## Usage
 
 Once logged in, select any Qoder model in pi:
 
 ```text
-/model qwen3.7-plus
+/model Qwen3.7-Plus
 ```
 
 Or start directly:
 
 ```bash
-pi --provider qoder-cn --model qwen3.7-plus
+pi --provider qoder-cn --model Qwen3.7-Plus
 ```
 
 Global example:
@@ -165,16 +150,20 @@ pi --provider qoder --model Lite
 
 ```text
 src/
-├── index.ts            # Extension registration
-├── cosy.ts             # COSY signature, machine ID, region/endpoints, friendly model IDs
-├── login.ts            # OAuth device flow + PAT login sequence
-├── pat.ts              # PAT → job-token exchange + identity resolution
-├── models.ts           # Model definitions and dynamic config cache
-├── oauth.ts            # PAT / OAuth callback orchestrator
-├── stream.ts           # Main streaming response handler
-├── transform.ts        # Message conversions (OpenAI schema mapping)
-├── thinking-parser.ts  # Fallback <think> tag parser
-└── qoder-encoding.ts   # WAF bypass body encoder
+├── index.ts              # Register the two providers
+├── region.ts             # Fixed global/CN configuration and URL helpers
+├── cosy.ts               # COSY signing, machine ID, and gateway headers
+├── catalog.ts            # Friendly model IDs, live catalog cache, static seeds
+├── auth/
+│   ├── pat.ts            # PAT → job-token exchange and identity
+│   ├── login.ts          # Browser/PAT login sequence
+│   ├── oauth.ts          # OAuth callback and credential orchestration
+│   └── usage.ts          # Quota reporting
+└── protocol/
+    ├── stream.ts         # Shared streaming request/response handler
+    ├── transform.ts      # Message and tool conversion
+    ├── encoding.ts       # WAF bypass body encoder
+    └── thinking.ts       # Fallback <think> tag parser
 ```
 
 ## License

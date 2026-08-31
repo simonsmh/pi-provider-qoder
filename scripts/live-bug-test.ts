@@ -17,12 +17,16 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { buildAuthHeaders, getQoderChatURL, getQoderMode } from "../src/cosy.js";
-import { qoderEncodeBody } from "../src/qoder-encoding.js";
-import { transformMessagesForQoder, transformTools } from "../src/transform.js";
+import { getCachedModelConfig } from "../src/catalog.js";
+import { buildAuthHeaders } from "../src/cosy.js";
+import { qoderEncodeBody } from "../src/protocol/encoding.js";
+import { transformMessagesForQoder, transformTools } from "../src/protocol/transform.js";
+import { getQoderChatURL } from "../src/region.js";
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
-const MODEL = process.argv[2] || "lite";
+const MODEL_ID = process.argv[2] || "Lite";
+const MODEL = getCachedModelConfig(MODEL_ID, "global")?.key;
+if (!MODEL) throw new Error(`Unknown friendly Qoder model id: ${MODEL_ID}`);
 
 interface QoderCreds {
   access: string;
@@ -89,8 +93,7 @@ interface TestResult {
 
 /** Send a request, decode the SSE envelope stream, return a verdict. */
 async function sendRequest(label: string, body: Record<string, unknown>): Promise<TestResult> {
-  const mode = getQoderMode();
-  const url = getQoderChatURL(mode);
+  const url = getQoderChatURL("global");
   const creds = loadCreds();
 
   // CRITICAL: body must be encoded with qoderEncodeBody, and auth headers
@@ -172,7 +175,7 @@ function fmt(r: TestResult) {
 
 async function main() {
   const creds = loadCreds();
-  console.log(`Loaded credentials: userID=${creds.userID} email=${creds.email} mode=${getQoderMode()}`);
+  console.log(`Loaded credentials: userID=${creds.userID} email=${creds.email} mode=global`);
 
   const piTools = [
     {

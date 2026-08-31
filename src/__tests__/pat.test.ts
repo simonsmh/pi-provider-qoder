@@ -6,7 +6,7 @@ import {
   fetchUserInfo,
   isPatRefresh,
   PAT_REFRESH_PREFIX,
-} from "../pat.js";
+} from "../auth/pat.js";
 import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
 afterEach(() => {

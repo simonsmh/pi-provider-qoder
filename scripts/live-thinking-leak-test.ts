@@ -10,24 +10,28 @@
  *   3. For comparison, that the OLD parser logic leaks `</thinking>` into text
  *      on the same stream.
  *
- * Usage: npx tsx scripts/live-thinking-leak-test.ts [model] [prompt]
- *   model defaults to "efficient" (the model that leaked historically)
+ * Usage: npx tsx scripts/live-thinking-leak-test.ts [friendly-model-id] [prompt]
+ *   model defaults to "Efficient" (the model that leaked historically)
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { buildAuthHeaders, getQoderChatURL, getQoderMode } from "../src/cosy.js";
-import { qoderEncodeBody } from "../src/qoder-encoding.js";
-import { transformMessagesForQoder } from "../src/transform.js";
+import { getCachedModelConfig } from "../src/catalog.js";
+import { buildAuthHeaders } from "../src/cosy.js";
+import { qoderEncodeBody } from "../src/protocol/encoding.js";
+import { transformMessagesForQoder } from "../src/protocol/transform.js";
 import {
   THINKING_TAG_VARIANTS,
   ThinkingTagParser,
   stripThinkingTags,
-} from "../src/thinking-parser.js";
+} from "../src/protocol/thinking.js";
+import { getQoderChatURL } from "../src/region.js";
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
-const MODEL = process.argv[2] || "efficient";
+const MODEL_ID = process.argv[2] || "Efficient";
+const MODEL = getCachedModelConfig(MODEL_ID, "global")?.key;
+if (!MODEL) throw new Error(`Unknown friendly Qoder model id: ${MODEL_ID}`);
 const PROMPT =
   process.argv[3] ||
   "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Reason carefully step by step before answering.";
@@ -95,8 +99,7 @@ interface RawStream {
 
 /** POST and collect every raw delta.reasoning_content / delta.content chunk. */
 async function captureRawStream(model: string, isReasoning: boolean): Promise<RawStream> {
-  const mode = getQoderMode();
-  const url = getQoderChatURL(mode);
+  const url = getQoderChatURL("global");
   const creds = loadCreds();
   const messages = transformMessagesForQoder([{ role: "user", content: PROMPT } as never]);
   const body = buildRequestBody(model, messages, isReasoning);

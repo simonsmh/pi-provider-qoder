@@ -1,6 +1,6 @@
 import type { Message, Tool } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { getContentText, transformMessagesForQoder, transformTools } from "../transform.js";
+import { getContentText, transformMessagesForQoder, transformTools } from "../protocol/transform.js";
 
 // ── getContentText ────────────────────────────────────────────────────────
 

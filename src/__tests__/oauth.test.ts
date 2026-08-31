@@ -2,14 +2,14 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { updateQoderModelsCache } from "../models.js";
-import { autoLoginQoderFromEnvironment, getCachedCredentials, getQoderPatForMode } from "../oauth.js";
-import { credentialsFromPat } from "../pat.js";
+import { updateQoderModelsCache } from "../catalog.js";
+import { autoLoginQoderFromEnvironment, getCachedCredentials, getQoderPatForMode } from "../auth/oauth.js";
+import { credentialsFromPat } from "../auth/pat.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
 
-vi.mock("../pat.js", () => ({
+vi.mock("../auth/pat.js", () => ({
   credentialsFromPat: vi.fn().mockResolvedValue({
     access: "mock-access-token",
     refresh: "mock-refresh-token",
@@ -24,7 +24,7 @@ vi.mock("../pat.js", () => ({
   decodePatRefresh: vi.fn(),
 }));
 
-vi.mock("../models.js", () => ({
+vi.mock("../catalog.js", () => ({
   updateQoderModelsCache: vi.fn().mockResolvedValue(undefined),
   getCachedModels: vi.fn().mockReturnValue([]),
   isCacheStale: vi.fn().mockReturnValue(true),

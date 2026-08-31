@@ -12,11 +12,12 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import { buildAuthHeaders, getMachineId, getQoderChatURL, getQoderRegionConfig, isQoderCNMode } from "./cosy.js";
-import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "./models.js";
-import { resolveQoderIdentity } from "./oauth.js";
-import { qoderEncodeBody } from "./qoder-encoding.js";
-import { stripThinkingTags, ThinkingTagParser } from "./thinking-parser.js";
+import { buildAuthHeaders, getMachineId } from "../cosy.js";
+import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
+import { resolveQoderIdentity } from "../auth/oauth.js";
+import { getQoderChatURL, getQoderRegionConfig } from "../region.js";
+import { qoderEncodeBody } from "./encoding.js";
+import { stripThinkingTags, ThinkingTagParser } from "./thinking.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
 
 interface ToolCallState {
@@ -115,7 +116,7 @@ export function streamQoder(
       const accessToken = options?.apiKey;
       if (!accessToken) {
         throw new Error(
-          isQoderCNMode(providerMode)
+          providerMode === "cn"
             ? "Qoder CN credentials not set. Run /login qoder-cn or set QODERCN_PERSONAL_ACCESS_TOKEN."
             : "Qoder credentials not set. Run /login qoder or set QODER_PERSONAL_ACCESS_TOKEN.",
         );
@@ -134,13 +135,11 @@ export function streamQoder(
       // Both providers expose the upstream display_name (whitespace stripped)
       // as the pi id. Read the original key from cached/static config so the
       // gateway still receives identifiers such as `lite` or `qmodel`.
-      const modelConfig = getCachedModelConfig(model.id, providerMode) || {
-        key: model.id,
-        is_reasoning: false,
-        source: "system",
-      };
-      // Raw legacy keys are also indexed as aliases by the model config cache.
-      const qoderModel = modelConfig.key || model.id;
+      const modelConfig = getCachedModelConfig(model.id, providerMode);
+      if (!modelConfig?.key) {
+        throw new Error(`Unknown Qoder model id: ${model.id}`);
+      }
+      const qoderModel = modelConfig.key;
 
       const isReasoning = !!modelConfig.is_reasoning;
 
