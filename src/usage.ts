@@ -33,10 +33,7 @@ export interface QoderProviderUsage {
   raw?: Record<string, unknown>;
 }
 
-export async function fetchQoderUsageForMode(
-  credentials: OAuthCredentials,
-  mode: string,
-): Promise<QoderProviderUsage> {
+export async function fetchQoderUsageForMode(credentials: OAuthCredentials, mode: string): Promise<QoderProviderUsage> {
   const region = getQoderRegionConfig(mode);
   const response = await fetch(getQoderUsageURL(mode), {
     method: "GET",

@@ -182,10 +182,7 @@ export async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: st
   return creds;
 }
 
-export async function refreshQoderTokenForMode(
-  credentials: OAuthCredentials,
-  mode: string,
-): Promise<OAuthCredentials> {
+export async function refreshQoderTokenForMode(credentials: OAuthCredentials, mode: string): Promise<OAuthCredentials> {
   // PAT-based credentials: re-exchange the stored PAT for a fresh job token.
   if (isPatRefresh(credentials.refresh)) {
     const { pat } = decodePatRefresh(credentials.refresh);

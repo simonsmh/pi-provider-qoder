@@ -1,3 +1,4 @@
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const originalRegion = process.env.QODER_REGION;
@@ -41,9 +42,8 @@ describe("provider region binding", () => {
     expect(providers.get("qoder")?.baseUrl).toBe("https://api3.qoder.sh/");
     expect(providers.get("qoder-cn")?.baseUrl).toBe("https://gateway.qoder.com.cn/");
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
         new Response(
           JSON.stringify({
             userQuota: { total: 100, used: 1, remaining: 99, percentage: 1, unit: "requests" },
@@ -54,27 +54,21 @@ describe("provider region binding", () => {
           }),
           { status: 200 },
         ),
-      );
+    );
     vi.stubGlobal("fetch", fetchMock);
 
-    const credentials = { access: "test-token", refresh: "", expires: Date.now() + 3600_000 };
+    const credentials: OAuthCredentials = { access: "test-token", refresh: "", expires: Date.now() + 3600_000 };
     const globalOAuth = providers.get("qoder")?.oauth as {
-      fetchUsage: (credentials: typeof credentials) => Promise<unknown>;
+      fetchUsage: (credentials: OAuthCredentials) => Promise<unknown>;
     };
     const cnOAuth = providers.get("qoder-cn")?.oauth as {
-      fetchUsage: (credentials: typeof credentials) => Promise<unknown>;
+      fetchUsage: (credentials: OAuthCredentials) => Promise<unknown>;
     };
 
     await globalOAuth.fetchUsage(credentials);
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "https://openapi.qoder.sh/api/v2/quota/usage",
-      expect.any(Object),
-    );
+    expect(fetchMock).toHaveBeenLastCalledWith("https://openapi.qoder.sh/api/v2/quota/usage", expect.any(Object));
 
     await cnOAuth.fetchUsage(credentials);
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "https://openapi.qoder.com.cn/api/v2/quota/usage",
-      expect.any(Object),
-    );
+    expect(fetchMock).toHaveBeenLastCalledWith("https://openapi.qoder.com.cn/api/v2/quota/usage", expect.any(Object));
   });
 });

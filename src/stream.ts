@@ -12,13 +12,7 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import {
-  buildAuthHeaders,
-  getMachineId,
-  getQoderChatURL,
-  getQoderRegionConfig,
-  isQoderCNMode,
-} from "./cosy.js";
+import { buildAuthHeaders, getMachineId, getQoderChatURL, getQoderRegionConfig, isQoderCNMode } from "./cosy.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "./models.js";
 import { resolveQoderIdentity } from "./oauth.js";
 import { qoderEncodeBody } from "./qoder-encoding.js";
