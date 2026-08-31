@@ -125,8 +125,8 @@ export function getQoderRefreshURL(mode?: string): string {
  * tracks whatever upstream returns, so a renamed/upgraded model is shown
  * correctly without a code change.
  */
-export function toQoderCNModelId(displayName?: string): string {
-  return (displayName || "QoderCNModel").replace(/\s+/g, "");
+export function toQoderModelId(displayName?: string): string {
+  return (displayName || "QoderModel").replace(/\s+/g, "");
 }
 
 export function getQoderManageUrl(mode?: string): string {

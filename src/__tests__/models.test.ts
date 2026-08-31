@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   contextWindowFromCatalog,
   DEFAULT_CONTEXT_WINDOW,
+  getCachedModelConfig,
   staticCnModels,
   staticModels,
   ZERO_COST,
@@ -16,7 +17,7 @@ describe("staticModels", () => {
   });
 
   it("has auto as first entry", () => {
-    expect(staticModels[0].id).toBe("auto");
+    expect(staticModels[0].id).toBe("Auto");
   });
 
   it("every model has required fields", () => {
@@ -43,16 +44,22 @@ describe("staticModels", () => {
   it("uses a 1M context window for models confirmed to support it", () => {
     // Global lite was live-tested through 1,000K tokens (issue #13). auto,
     // efficient, and gm51model share the same Qoder 1M catalog family.
-    for (const id of ["auto", "efficient", "lite", "gm51model"]) {
-      const model = staticModels.find((m) => m.id === id);
-      expect(model, id).toBeDefined();
+    for (const key of ["auto", "efficient", "lite", "gm51model"]) {
+      const model = staticModels.find((m) => m.upstreamKey === key);
+      expect(model, key).toBeDefined();
       expect(model?.contextWindow).toBe(DEFAULT_CONTEXT_WINDOW);
       expect(model?.contextWindow).toBe(1_000_000);
     }
   });
 
   it("keeps kmodel at the catalog-advertised 256K window", () => {
-    expect(staticModels.find((m) => m.id === "kmodel")?.contextWindow).toBe(256000);
+    expect(staticModels.find((m) => m.upstreamKey === "kmodel")?.contextWindow).toBe(256000);
+  });
+
+  it("maps friendly ids and legacy keys to the same static upstream key", () => {
+    expect(getCachedModelConfig("Lite", "global")?.key).toBe("lite");
+    expect(getCachedModelConfig("lite", "global")?.key).toBe("lite");
+    expect(getCachedModelConfig("Qwen3.8-Max", "global")?.key).toBe("qmodel_preview");
   });
 });
 

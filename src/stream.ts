@@ -137,18 +137,15 @@ export function streamQoder(
       const email = ident.email || getQoderUserEmailFallback(providerMode);
       const machineID = ident.machineID || getMachineId();
 
-      // The model `id` pi exposes is the upstream display_name (whitespace
-      // stripped) for CN, or the raw key for the international site. The
-      // request-time upstream `key` is read back from the cached model config
-      // (which stores the original entry keyed by both `key` and `id`), so no
-      // key<->friendlyId mapping table is needed here.
+      // Both providers expose the upstream display_name (whitespace stripped)
+      // as the pi id. Read the original key from cached/static config so the
+      // gateway still receives identifiers such as `lite` or `qmodel`.
       const modelConfig = getCachedModelConfig(model.id, providerMode) || {
         key: model.id,
         is_reasoning: false,
         source: "system",
       };
-      // Use the cached entry's original upstream key when available; fall back to
-      // the pi id (international site already uses the key as id).
+      // Raw legacy keys are also indexed as aliases by the model config cache.
       const qoderModel = modelConfig.key || model.id;
 
       const isReasoning = !!modelConfig.is_reasoning;

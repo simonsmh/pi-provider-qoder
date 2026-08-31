@@ -8,7 +8,7 @@ import {
   getQoderMode,
   getQoderModelListURL,
   isQoderCNMode,
-  toQoderCNModelId,
+  toQoderModelId,
 } from "./cosy.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
@@ -55,6 +55,7 @@ export interface QoderModelEntry {
 
 export interface QoderModelDef {
   id: string;
+  upstreamKey?: string;
   name: string;
   api: "qoder-api";
   provider: "qoder" | "qoder-cn";
@@ -80,8 +81,10 @@ function getQoderCachePath(mode?: string): string {
 
 export const staticModels: QoderModelDef[] = [
   {
-    id: "auto",
-    name: "Qoder Auto",
+    id: "Auto",
+    upstreamKey: "auto",
+    upstreamKey: "auto",
+    name: "Auto",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -93,8 +96,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "ultimate",
-    name: "Qoder Ultimate",
+    id: "Ultimate",
+    upstreamKey: "ultimate",
+    name: "Ultimate",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -106,8 +110,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "performance",
-    name: "Qoder Performance",
+    id: "Performance",
+    upstreamKey: "performance",
+    name: "Performance",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -119,8 +124,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "efficient",
-    name: "Qoder Efficient",
+    id: "Efficient",
+    upstreamKey: "efficient",
+    name: "Efficient",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -132,8 +138,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "lite",
-    name: "Qoder Lite",
+    id: "Lite",
+    upstreamKey: "lite",
+    name: "Lite",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -145,8 +152,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "qmodel",
-    name: "Qwen3.7 Plus (Qoder)",
+    id: "Qwen3.7Plus",
+    upstreamKey: "qmodel",
+    name: "Qwen3.7 Plus",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -158,8 +166,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "cmodel",
-    name: "Cantus (Qoder)",
+    id: "Cantus",
+    upstreamKey: "cmodel",
+    name: "Cantus",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -171,8 +180,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "qmodel_preview",
-    name: "Qwen3.8 Max Preview (Qoder)",
+    id: "Qwen3.8-Max",
+    upstreamKey: "qmodel_preview",
+    name: "Qwen3.8-Max",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -184,8 +194,10 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "qmodel_latest",
-    name: "Qwen3.7 Max (Qoder)",
+    id: "Qwen3.7-Max",
+    upstreamKey: "qmodel_latest",
+    upstreamKey: "qmodel_latest",
+    name: "Qwen3.7-Max",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -197,8 +209,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "dmodel",
-    name: "DeepSeek V4 Pro (Qoder)",
+    id: "DeepSeek-V4-Pro",
+    upstreamKey: "dmodel",
+    name: "DeepSeek-V4-Pro",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -210,8 +223,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "dfmodel",
-    name: "DeepSeek V4 Flash (Qoder)",
+    id: "DeepSeek-V4-Flash",
+    upstreamKey: "dfmodel",
+    name: "DeepSeek-V4-Flash",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -223,8 +237,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "gm51model",
-    name: "GLM 5.2 (Qoder)",
+    id: "GLM-5.2",
+    upstreamKey: "gm51model",
+    name: "GLM-5.2",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -236,8 +251,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "kmodel",
-    name: "Kimi K2.7 Code (Qoder)",
+    id: "Kimi-K2.7-Code",
+    upstreamKey: "kmodel",
+    name: "Kimi-K2.7-Code",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -250,8 +266,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "kmodel_latest",
-    name: "Kimi K3 (Qoder)",
+    id: "Kimi-K3",
+    upstreamKey: "kmodel_latest",
+    name: "Kimi-K3",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -263,8 +280,9 @@ export const staticModels: QoderModelDef[] = [
     maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
-    id: "mmodel",
-    name: "MiniMax M3 (Qoder)",
+    id: "MiniMax-M3",
+    upstreamKey: "mmodel",
+    name: "MiniMax-M3",
     api: "qoder-api",
     provider: "qoder",
     baseUrl: "https://api3.qoder.sh/",
@@ -310,6 +328,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "Qwen3.7-Plus",
+    upstreamKey: "qmodel",
     name: "Qwen3.7-Plus",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -324,6 +343,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "Qwen3.6-Flash",
+    upstreamKey: "q36fmodel",
     name: "Qwen3.6-Flash",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -338,6 +358,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "DeepSeek-V4-Pro",
+    upstreamKey: "dmodel",
     name: "DeepSeek-V4-Pro",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -352,6 +373,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "DeepSeek-V4-Flash",
+    upstreamKey: "dfmodel",
     name: "DeepSeek-V4-Flash",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -366,6 +388,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "GLM-5.2",
+    upstreamKey: "gm51model",
     name: "GLM-5.2",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -381,6 +404,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "Kimi-K2.7-Code",
+    upstreamKey: "kmodel",
     name: "Kimi-K2.7-Code",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -396,6 +420,7 @@ export const staticCnModels: QoderModelDef[] = [
   },
   {
     id: "MiniMax-M2.7",
+    upstreamKey: "mmodel",
     name: "MiniMax-M2.7",
     api: "qoder-api",
     provider: "qoder-cn",
@@ -463,12 +488,17 @@ export function getCachedModels(mode?: string): QoderModelDef[] {
     try {
       const data = JSON.parse(readFileSync(cachePath, "utf8"));
       if (data && Array.isArray(data.models)) {
+        const models = data.models.map((model: QoderModelDef) => {
+          const config = data.configs?.[model.id] as QoderModelEntry | undefined;
+          const display = config?.display_name;
+          return display ? { ...model, id: toQoderModelId(display), name: display } : model;
+        });
         // Older releases injected `auto` without a corresponding service config.
         // Keep an explicitly enabled service model, but drop the legacy fallback.
         if (data.configs && typeof data.configs === "object" && !data.configs.auto) {
-          return data.models.filter((model: QoderModelDef) => model.id !== "auto");
+          return models.filter((model: QoderModelDef) => model.id.toLowerCase() !== "auto");
         }
-        return data.models;
+        return models;
       }
     } catch {}
   }
@@ -486,19 +516,24 @@ export function getCachedModelConfig(modelKey: string, mode?: string): QoderMode
     } catch {}
   }
 
-  // No cached config. This only happens before the first successful catalog
-  // fetch (e.g. not yet logged in), in which case the request cannot succeed
-  // anyway. Return a minimal entry carrying the id as the key so callers have
-  // something to read; reasoning is unknown so default to false.
-  if (isQoderCNMode(mode)) {
+  // Static catalogs expose friendly ids too. Preserve raw keys as request-time
+  // aliases so older commands and persisted selections continue to work.
+  const staticModel = (isQoderCNMode(mode) ? staticCnModels : staticModels).find(
+    (model) => model.id.toLowerCase() === modelKey.toLowerCase() || model.upstreamKey === modelKey,
+  );
+  if (staticModel) {
     return {
-      key: modelKey,
-      is_reasoning: false,
+      key: staticModel.upstreamKey || modelKey,
+      is_reasoning: staticModel.reasoning,
       source: "system",
     };
   }
 
-  return null;
+  return {
+    key: modelKey,
+    is_reasoning: false,
+    source: "system",
+  };
 }
 
 /** Resolve contextWindow from a catalog entry. Exported for tests. */
@@ -600,12 +635,10 @@ export async function updateQoderModelsCache(
       const isReasoning = !!entry.is_reasoning || !!entry.thinking_config;
       const supportsEffort = !!entry.thinking_config?.enabled?.efforts;
       const thinkingLevelMap = buildThinkingLevelMap(entry);
-      // CN models expose the upstream display_name (whitespace-stripped) as the
-      // pi-visible id; the original `key` is stored in `configs` and read back at
-      // request time, so no key<->friendlyId mapping table is needed.
-      const modelInfo = isQoderCNMode(mode)
-        ? { id: toQoderCNModelId(display), name: display }
-        : { id: key, name: display };
+      // Both regions expose display_name (whitespace-stripped) as the pi-visible
+      // id. The original key remains indexed in configs for request-time lookup
+      // and compatibility with old CLI/persisted model references.
+      const modelInfo = { id: toQoderModelId(display), name: display };
 
       configs[key] = entry;
       if (modelInfo.id !== key) configs[modelInfo.id] = entry;

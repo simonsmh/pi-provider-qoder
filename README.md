@@ -96,20 +96,25 @@ China:
 
 ### Global `qoder`
 
-Exposes the backing model keys returned by Qoder, including:
+Exposes friendly IDs derived from the catalog `display_name` (whitespace is
+removed), including:
 
-- **Tier Models**: `auto`, `ultimate`, `performance`, `efficient`, `lite`
+- **Tier Models**: `Auto`, `Ultimate`, `Performance`, `Efficient`, `Lite`
 - **Frontier Models**:
-  - `qmodel` (Qwen3.7 Plus)
-  - `cmodel` (Cantus)
-  - `qmodel_preview` (Qwen3.8 Max Preview)
-  - `qmodel_latest` (Qwen3.7 Max)
-  - `dmodel` (DeepSeek V4 Pro)
-  - `dfmodel` (DeepSeek V4 Flash)
-  - `gm51model` (GLM 5.2)
-  - `kmodel` (Kimi K2.7 Code)
-  - `kmodel_latest` (Kimi K3)
-  - `mmodel` (MiniMax M3)
+  - `Qwen3.7Plus`
+  - `Cantus`
+  - `Qwen3.8-Max`
+  - `Qwen3.7-Max`
+  - `DeepSeek-V4-Pro`
+  - `DeepSeek-V4-Flash`
+  - `GLM-5.2`
+  - `Kimi-K2.7-Code`
+  - `Kimi-K3`
+  - `MiniMax-M3`
+
+The original service keys remain compatibility aliases, so existing commands
+such as `--model lite` and references such as `qoder/lite` still send the
+upstream `lite` key.
 
 Global models default to a 1M context window, matching the Qoder API (verified
 against `lite` with prompts up to 1,000K tokens). `kmodel` stays at the 256K its
@@ -153,7 +158,7 @@ pi --provider qoder-cn --model qwen3.7-plus
 Global example:
 
 ```bash
-pi --provider qoder --model auto
+pi --provider qoder --model Lite
 ```
 
 ## Architecture
@@ -161,7 +166,7 @@ pi --provider qoder --model auto
 ```text
 src/
 ├── index.ts            # Extension registration
-├── cosy.ts             # COSY signature, machine ID, region/endpoints, CN model aliases
+├── cosy.ts             # COSY signature, machine ID, region/endpoints, friendly model IDs
 ├── login.ts            # OAuth device flow + PAT login sequence
 ├── pat.ts              # PAT → job-token exchange + identity resolution
 ├── models.ts           # Model definitions and dynamic config cache

@@ -14,7 +14,7 @@ import {
   getQoderUserEmailFallback,
   getQoderUserInfoURL,
   isQoderCNMode,
-  toQoderCNModelId,
+  toQoderModelId,
 } from "../cosy.js";
 
 // ── getQoderMode ──────────────────────────────────────────────────────────
@@ -159,24 +159,24 @@ describe("getQoderUserEmailFallback", () => {
   });
 });
 
-// ── toQoderCNModelId ──────────────────────────────────────────────────────
+// ── toQoderModelId ────────────────────────────────────────────────────────
 
-describe("toQoderCNModelId", () => {
+describe("toQoderModelId", () => {
   it("strips whitespace from the upstream display_name", () => {
     // The display name is used directly as the pi-visible model id, with
     // whitespace removed so it stays a clean token for persistence keys and
     // search. "Qwen3.8-Flash" has no spaces already.
-    expect(toQoderCNModelId("Qwen3.8-Flash")).toBe("Qwen3.8-Flash");
+    expect(toQoderModelId("Qwen3.8-Flash")).toBe("Qwen3.8-Flash");
   });
 
   it("collapses internal spaces", () => {
-    expect(toQoderCNModelId("Qwen 3.8 Max")).toBe("Qwen3.8Max");
-    expect(toQoderCNModelId("DeepSeek V4 Pro")).toBe("DeepSeekV4Pro");
+    expect(toQoderModelId("Qwen 3.8 Max")).toBe("Qwen3.8Max");
+    expect(toQoderModelId("DeepSeek V4 Pro")).toBe("DeepSeekV4Pro");
   });
 
   it("falls back to a default when no display name is given", () => {
-    expect(toQoderCNModelId()).toBe("QoderCNModel");
-    expect(toQoderCNModelId("")).toBe("QoderCNModel");
+    expect(toQoderModelId()).toBe("QoderModel");
+    expect(toQoderModelId("")).toBe("QoderModel");
   });
 });
 
