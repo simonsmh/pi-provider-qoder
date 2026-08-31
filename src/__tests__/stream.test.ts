@@ -10,6 +10,21 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamQoder } from "../stream.js";
 
+// Pin the identity so the mocked fetch below only ever serves the chat request.
+// Without a resolved identity, streamQoder fetches /userinfo first and consumes
+// the mock response, leaving the chat read to fail on a locked stream.
+vi.mock("../oauth.js", () => ({
+  resolveQoderIdentity: vi.fn().mockResolvedValue({
+    access: "fake",
+    userID: "test-user",
+    email: "test@example.com",
+    name: "Test User",
+    machineID: "test-machine",
+    refresh: "",
+    expires: 0,
+  }),
+}));
+
 /**
  * Build a single SSE `data:` line carrying a Qoder envelope:
  *   { headers, body: <JSON string>, statusCodeValue, statusCode }
