@@ -43,8 +43,8 @@ describe("staticCnModels", () => {
     expect(staticCnModels.length).toBeGreaterThan(0);
   });
 
-  it("has auto as first entry", () => {
-    expect(staticCnModels[0].id).toBe("auto");
+  it("has Auto as first entry", () => {
+    expect(staticCnModels[0].id).toBe("Auto");
   });
 
   it("every CN model has required fields", () => {

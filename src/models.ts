@@ -1,16 +1,30 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { ThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import {
   buildAuthHeaders,
   getQoderBaseUrl,
-  getQoderCNFriendlyModelInfo,
   getQoderMode,
   getQoderModelListURL,
   isQoderCNMode,
+  toQoderCNModelId,
 } from "./cosy.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+/**
+ * Maximum output tokens sent per request. Aliyun Model Studio (the upstream
+ * behind Qoder's CN catalog) documents Max Output Length = 131072 for every
+ * model we expose (qwen3.8-max/flash, qwen3.7-max/plus/flash), in both normal
+ * and thinking modes (thinking chain alone goes up to 262144). The Qoder
+ * /model/list catalog does not return a per-model output cap, so this single
+ * constant is the source of truth for both static models and request sending.
+ * qodercli ships a conservative 32e3 default and caps its UI at 65536; we use
+ * the documented upstream ceiling so reasoning chains and long generations
+ * are not truncated.
+ */
+export const MAX_OUTPUT_TOKENS = 131072;
 
 /** Shape of a single entry returned by the Qoder /model/list endpoint. */
 export interface QoderModelEntry {
@@ -18,11 +32,13 @@ export interface QoderModelEntry {
   enable?: boolean;
   display_name?: string;
   max_input_tokens?: number;
-  max_output_tokens?: number;
   context_config?: Record<string, { token_count?: number; is_default?: boolean }>;
   is_vl?: boolean;
   is_reasoning?: boolean;
-  thinking_config?: { enabled?: { efforts?: unknown } };
+  thinking_config?: {
+    disabled?: unknown;
+    enabled?: { efforts?: Record<string, { is_default?: boolean }>; is_default?: boolean };
+  };
   source?: string;
   [key: string]: unknown;
 }
@@ -35,6 +51,7 @@ export interface QoderModelDef {
   baseUrl: string;
   reasoning: boolean;
   supportsEffort: boolean;
+  thinkingLevelMap?: ThinkingLevelMap;
   input: ("text" | "image")[];
   cost: typeof ZERO_COST;
   contextWindow: number;
@@ -63,7 +80,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 180000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "ultimate",
@@ -76,7 +93,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "performance",
@@ -89,7 +106,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "efficient",
@@ -102,7 +119,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 180000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "lite",
@@ -115,7 +132,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text"],
     cost: ZERO_COST,
     contextWindow: 180000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "qmodel",
@@ -128,7 +145,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "cmodel",
@@ -141,7 +158,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "qmodel_preview",
@@ -154,7 +171,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "qmodel_latest",
@@ -167,7 +184,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "dmodel",
@@ -180,7 +197,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "dfmodel",
@@ -193,7 +210,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "gm51model",
@@ -206,7 +223,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "kmodel",
@@ -219,7 +236,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 256000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "kmodel_latest",
@@ -232,7 +249,7 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
   {
     id: "mmodel",
@@ -245,98 +262,14 @@ export const staticModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 1000000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
   },
 ];
 
 export const staticCnModels: QoderModelDef[] = [
   {
-    id: "auto",
-    name: "Auto · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: true,
-    supportsEffort: false,
-    input: ["text", "image"],
-    cost: ZERO_COST,
-    contextWindow: 180000,
-    maxTokens: 32768,
-    description: "Qoder CN smart routing; live catalog reports 180K max input.",
-  },
-  {
-    id: "qwen3.7-max",
-    name: "Qwen 3.7 Max · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: true,
-    supportsEffort: false,
-    input: ["text", "image"],
-    cost: ZERO_COST,
-    contextWindow: 1000000,
-    maxTokens: 32768,
-    description: "Qoder CN qmodel_latest; context options 200K/400K/1M.",
-  },
-  {
-    id: "qwen3.7-plus",
-    name: "Qwen 3.7 Plus · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: true,
-    supportsEffort: false,
-    input: ["text"],
-    cost: ZERO_COST,
-    contextWindow: 1000000,
-    maxTokens: 32768,
-    description: "Qoder CN qmodel; context options 200K/400K/1M.",
-  },
-  {
-    id: "qwen3.6-flash",
-    name: "Qwen 3.6 Flash · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: true,
-    supportsEffort: false,
-    input: ["text"],
-    cost: ZERO_COST,
-    contextWindow: 1000000,
-    maxTokens: 32768,
-    description: "Qoder CN q36fmodel; context options 200K/400K/1M.",
-  },
-  {
-    id: "deepseek-v4-pro",
-    name: "DeepSeek V4 Pro · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: true,
-    supportsEffort: false,
-    input: ["text"],
-    cost: ZERO_COST,
-    contextWindow: 1000000,
-    maxTokens: 32768,
-    description: "Qoder CN dmodel; context options 200K/400K/1M.",
-  },
-  {
-    id: "deepseek-v4-flash",
-    name: "DeepSeek V4 Flash · Qoder CN",
-    api: "qoder-api",
-    provider: "qoder-cn",
-    baseUrl: getQoderBaseUrl("cn"),
-    reasoning: false,
-    supportsEffort: false,
-    input: ["text"],
-    cost: ZERO_COST,
-    contextWindow: 1000000,
-    maxTokens: 32768,
-    description: "Qoder CN dfmodel; context options 200K/400K/1M.",
-  },
-  {
-    id: "glm-5.2",
-    name: "GLM 5.2 · Qoder CN",
+    id: "Auto",
+    name: "Auto",
     api: "qoder-api",
     provider: "qoder-cn",
     baseUrl: getQoderBaseUrl("cn"),
@@ -345,12 +278,96 @@ export const staticCnModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN smart routing; fallback context window of 200K.",
+  },
+  {
+    id: "Qwen3.7-Max",
+    name: "Qwen3.7-Max",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN qmodel_latest; context options 200K/400K/1M.",
+  },
+  {
+    id: "Qwen3.7-Plus",
+    name: "Qwen3.7-Plus",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN qmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "Qwen3.6-Flash",
+    name: "Qwen3.6-Flash",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN q36fmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "DeepSeek-V4-Pro",
+    name: "DeepSeek-V4-Pro",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN dmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "DeepSeek-V4-Flash",
+    name: "DeepSeek-V4-Flash",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: false,
+    supportsEffort: false,
+    input: ["text"],
+    cost: ZERO_COST,
+    contextWindow: 1000000,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    description: "Qoder CN dfmodel; context options 200K/400K/1M.",
+  },
+  {
+    id: "GLM-5.2",
+    name: "GLM-5.2",
+    api: "qoder-api",
+    provider: "qoder-cn",
+    baseUrl: getQoderBaseUrl("cn"),
+    reasoning: true,
+    supportsEffort: false,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow: 200000,
+    maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN gm51model; live catalog currently displays GLM-5.2 with 200K context.",
   },
   {
-    id: "kimi-k2.6",
-    name: "Kimi K2.6 · Qoder CN",
+    id: "Kimi-K2.7-Code",
+    name: "Kimi-K2.7-Code",
     api: "qoder-api",
     provider: "qoder-cn",
     baseUrl: getQoderBaseUrl("cn"),
@@ -359,12 +376,12 @@ export const staticCnModels: QoderModelDef[] = [
     input: ["text", "image"],
     cost: ZERO_COST,
     contextWindow: 256000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN kmodel; context option 256K.",
   },
   {
-    id: "minimax-m2.7",
-    name: "MiniMax M2.7 · Qoder CN",
+    id: "MiniMax-M2.7",
+    name: "MiniMax-M2.7",
     api: "qoder-api",
     provider: "qoder-cn",
     baseUrl: getQoderBaseUrl("cn"),
@@ -373,10 +390,56 @@ export const staticCnModels: QoderModelDef[] = [
     input: ["text"],
     cost: ZERO_COST,
     contextWindow: 200000,
-    maxTokens: 32768,
+    maxTokens: MAX_OUTPUT_TOKENS,
     description: "Qoder CN mmodel; live catalog reports 200K context.",
   },
 ];
+
+/** pi thinking levels in display order (matches the pi-ai SDK this build targets). */
+const PI_THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh"];
+
+/**
+ * Map Qoder's `thinking_config` to pi's `thinkingLevelMap` so the TUI exposes
+ * the levels the upstream model actually supports.
+ *
+ * Qoder has two shapes:
+ *   - effort-based: `thinking_config.enabled.efforts = { low, medium, xhigh, ... }`
+ *     Each effort key is already a pi level name, so supported levels map to
+ *     themselves and the rest are pinned to null (hidden in the picker).
+ *     `xhigh`/`max` are only shown when the map carries them, otherwise the
+ *     picker tops out at `high`.
+ *   - toggle-based: `thinking_config.enabled` without `efforts` (only on/off).
+ *     Every pi level is exposed and maps to "enabled" so a user picking any
+ *     level turns thinking on; the exact effort sent upstream is decided at
+ *     request time.
+ * Returns undefined for models that do not support thinking, so pi falls back
+ * to `reasoning: false`-style behavior (only `off`).
+ */
+function buildThinkingLevelMap(entry: QoderModelEntry): ThinkingLevelMap | undefined {
+  const tc = entry.thinking_config;
+  if (!tc) return undefined;
+  const efforts = tc.enabled?.efforts;
+  if (efforts && typeof efforts === "object") {
+    const supported = new Set(Object.keys(efforts));
+    // `off` (disable thinking) is selectable when the catalog advertises a
+    // `disabled` option; otherwise pin it to null to hide it.
+    const map: ThinkingLevelMap = { off: tc.disabled ? "disabled" : null };
+    for (const level of PI_THINKING_LEVELS) {
+      map[level] = supported.has(level) ? level : null;
+    }
+    return map;
+  }
+  // toggle-only (enabled/disabled, no efforts) — expose every level as "on".
+  // `off` is selectable when the catalog advertises `disabled`.
+  if (tc.enabled) {
+    const map: ThinkingLevelMap = { off: tc.disabled ? "disabled" : null };
+    for (const level of PI_THINKING_LEVELS) {
+      map[level] = "enabled";
+    }
+    return map;
+  }
+  return undefined;
+}
 
 export function getCachedModels(mode?: string): QoderModelDef[] {
   const cachePath = getQoderCachePath(mode);
@@ -407,30 +470,14 @@ export function getCachedModelConfig(modelKey: string, mode?: string): QoderMode
     } catch {}
   }
 
+  // No cached config. This only happens before the first successful catalog
+  // fetch (e.g. not yet logged in), in which case the request cannot succeed
+  // anyway. Return a minimal entry carrying the id as the key so callers have
+  // something to read; reasoning is unknown so default to false.
   if (isQoderCNMode(mode)) {
-    const reasoningModels = new Set([
-      "qoder-cn",
-      "auto",
-      "qmodel_latest",
-      "qmodel",
-      "q36fmodel",
-      "qfmodel",
-      "dmodel",
-      "gm51model",
-      "kmodel",
-      "qwen3.7-max",
-      "qwen3.7-plus",
-      "qwen3.6-plus",
-      "qwen3.6-flash",
-      "deepseek-v4-pro",
-      "glm-5.2",
-      "glm-5.1",
-      "kimi-k2.6",
-    ]);
     return {
       key: modelKey,
-      is_reasoning: reasoningModels.has(modelKey),
-      max_output_tokens: 32768,
+      is_reasoning: false,
       source: "system",
     };
   }
@@ -512,13 +559,17 @@ export async function updateQoderModelsCache(
       if (!key || !entry.enable) continue;
 
       const display = entry.display_name || key;
-      let ctxLen = entry.max_input_tokens || 180000;
+      // The context window is the largest selectable context option the upstream
+      // catalog exposes (e.g. 1M when 200K/400K/1M are offered). Fall back to
+      // 200K when no context_config is present. `max_input_tokens` is not used:
+      // it is a flat base value (180K) that every catalog entry with selectable
+      // contexts already exceeds, so it only ever acted as a redundant floor.
+      let ctxLen = 200000;
       if (entry.context_config && typeof entry.context_config === "object") {
         for (const configVal of Object.values(entry.context_config)) {
           if (configVal && typeof configVal === "object" && typeof configVal.token_count === "number") {
-            const tc = configVal.token_count;
-            if (tc > ctxLen) {
-              ctxLen = tc;
+            if (configVal.token_count > ctxLen) {
+              ctxLen = configVal.token_count;
             }
           }
         }
@@ -526,7 +577,13 @@ export async function updateQoderModelsCache(
       const isVL = !!entry.is_vl;
       const isReasoning = !!entry.is_reasoning || !!entry.thinking_config;
       const supportsEffort = !!entry.thinking_config?.enabled?.efforts;
-      const modelInfo = isQoderCNMode(mode) ? getQoderCNFriendlyModelInfo(key, display) : { id: key, name: display };
+      const thinkingLevelMap = buildThinkingLevelMap(entry);
+      // CN models expose the upstream display_name (whitespace-stripped) as the
+      // pi-visible id; the original `key` is stored in `configs` and read back at
+      // request time, so no key<->friendlyId mapping table is needed.
+      const modelInfo = isQoderCNMode(mode)
+        ? { id: toQoderCNModelId(display), name: display }
+        : { id: key, name: display };
 
       configs[key] = entry;
       if (modelInfo.id !== key) configs[modelInfo.id] = entry;
@@ -539,10 +596,11 @@ export async function updateQoderModelsCache(
         baseUrl: getQoderBaseUrl(mode),
         reasoning: isReasoning,
         supportsEffort,
+        thinkingLevelMap,
         input: isVL ? ["text", "image"] : ["text"],
         cost: ZERO_COST,
         contextWindow: ctxLen,
-        maxTokens: entry.max_output_tokens || 32768,
+        maxTokens: MAX_OUTPUT_TOKENS,
       });
     }
 

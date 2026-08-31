@@ -348,4 +348,56 @@ describe("transformMessagesForQoder", () => {
     expect(tool.role).toBe("tool");
     expect(tool.tool_call_id).toBe("call_abc123");
   });
+  it("drops the tool result whose assistant turn was aborted", () => {
+    // Cancelling a turn mid-tool used to drop only the assistant message and
+    // keep its tool result, leaving a `tool` message with no matching
+    // tool_calls. Upstreams reject that with "tool must follow a message with
+    // tool_calls", so every later request in the session failed.
+    const msgs = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        stopReason: "aborted",
+        content: [{ type: "toolCall", id: "call_gone", name: "bash", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_gone", content: "output" },
+      { role: "user", content: "again" },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+
+    expect(result.map((m) => (m as { role: string }).role)).toEqual(["user", "user"]);
+    expect(result.some((m) => (m as { role: string }).role === "tool")).toBe(false);
+  });
+
+  it("keeps a healthy tool round-trip while dropping an aborted one", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        stopReason: "error",
+        content: [{ type: "toolCall", id: "call_bad", name: "x", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_bad", content: "r1" },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_good", name: "y", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_good", content: "r2" },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+
+    expect(result).toHaveLength(2);
+    const asst = result[0] as { tool_calls?: Array<{ id: string }> };
+    const tool = result[1] as { role: string; tool_call_id: string };
+    expect(asst.tool_calls?.map((t) => t.id)).toEqual(["call_good"]);
+    expect(tool.tool_call_id).toBe("call_good");
+
+    // Every tool message must have a declaring tool_calls entry.
+    const declared = new Set(
+      result.flatMap((m) => ((m as { tool_calls?: Array<{ id: string }> }).tool_calls ?? []).map((t) => t.id)),
+    );
+    for (const m of result) {
+      const tm = m as { role: string; tool_call_id?: string };
+      if (tm.role === "tool") expect(declared.has(tm.tool_call_id as string)).toBe(true);
+    }
+  });
 });
