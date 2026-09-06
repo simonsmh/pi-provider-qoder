@@ -1,7 +1,7 @@
 {
   "name": "pi-provider-qoder",
   "version": "0.4.2",
-  "description": "Pi extension for Qoder AI \u2014 with OAuth authentication, COSY signatures and WAF bypass",
+  "description": "Pi extension for Qoder AI — with OAuth authentication, COSY signatures and WAF bypass",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -36,9 +36,9 @@
     ]
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.2",
-    "@earendil-works/pi-ai": "^0.80.2",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@biomejs/biome": "2.5.12",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
