@@ -14,6 +14,21 @@ import { loadLiveFixture } from "./live-fixture.js";
 
 const AUTH_FILE = join(process.env.HOME || process.env.USERPROFILE || homedir(), ".pi", "agent", "auth.json");
 
+const PAT_ENV_NAMES = [
+  "QODER_API_KEY",
+  "QODER_PERSONAL_ACCESS_TOKEN",
+  "QODER_PAT",
+  "QODERCN_API_KEY",
+  "QODERCN_PERSONAL_ACCESS_TOKEN",
+  "QODERCN_PAT",
+] as const;
+
+function clearPatEnv(): void {
+  for (const name of PAT_ENV_NAMES) {
+    delete process.env[name];
+  }
+}
+
 vi.mock("../auth/pat.js", () => ({
   credentialsFromPat: vi.fn().mockResolvedValue({
     access: "mock-access-token",
@@ -44,6 +59,7 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
+    clearPatEnv();
     clearQoderAuthMemCache();
     originalAuth = existsSync(AUTH_FILE) ? readFileSync(AUTH_FILE, "utf8") : undefined;
   });
@@ -64,10 +80,6 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
   });
 
   it("does nothing if no PAT in environment", async () => {
-    delete process.env.QODER_PERSONAL_ACCESS_TOKEN;
-    delete process.env.QODER_API_KEY;
-    delete process.env.QODER_PAT;
-
     await autoLoginQoderFromEnvironment("qoder-test-provider", "global");
     expect(getCachedCredentials("mock-token", "qoder-test-provider")).toBeNull();
   });
@@ -112,6 +124,7 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
       machineID: "<redacted:machine-id>",
       type: "oauth",
     } as never);
+    clearPatEnv();
     process.env.QODER_PAT = "test-only-pat";
 
     await autoLoginQoderFromEnvironment("qoder-fixture-provider", "global");
