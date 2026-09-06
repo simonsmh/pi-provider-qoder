@@ -64,8 +64,54 @@ export interface QoderModelDef {
   description?: string;
 }
 
+function getHomeDir(): string {
+  // Prefer process.env.HOME so vitest setup can isolate caches. Node 26+ caches
+  // os.homedir() from process start, ignoring later HOME changes.
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 function getQoderCachePath(mode: QoderMode): string {
-  return join(homedir(), ".pi", "agent", getQoderRegionConfig(mode).modelCacheFile);
+  return join(getHomeDir(), ".pi", "agent", getQoderRegionConfig(mode).modelCacheFile);
+}
+
+interface ParsedModelCache {
+  updatedAt?: number;
+  models?: QoderModelDef[];
+  configs?: Record<string, QoderModelEntry>;
+}
+
+/** In-memory cache keyed by absolute cache path (HOME-safe across tests). */
+const modelCacheMem = new Map<string, ParsedModelCache | null>();
+
+/** Clear process-memory model caches (also used by tests that mutate cache files). */
+export function clearQoderModelsMemCache(): void {
+  modelCacheMem.clear();
+}
+
+function readParsedModelCache(mode: QoderMode): ParsedModelCache | null {
+  const cachePath = getQoderCachePath(mode);
+  if (modelCacheMem.has(cachePath)) {
+    return modelCacheMem.get(cachePath) ?? null;
+  }
+  if (!existsSync(cachePath)) {
+    modelCacheMem.set(cachePath, null);
+    return null;
+  }
+  try {
+    const data = JSON.parse(readFileSync(cachePath, "utf8")) as ParsedModelCache;
+    modelCacheMem.set(cachePath, data);
+    return data;
+  } catch {
+    modelCacheMem.set(cachePath, null);
+    return null;
+  }
+}
+
+function writeParsedModelCache(mode: QoderMode, data: ParsedModelCache): void {
+  const cachePath = getQoderCachePath(mode);
+  mkdirSync(dirname(cachePath), { recursive: true });
+  writeFileSync(cachePath, JSON.stringify(data, null, 2), "utf-8");
+  modelCacheMem.set(cachePath, data);
 }
 
 /**
@@ -480,52 +526,42 @@ function buildThinkingLevelMap(entry: QoderModelEntry): ThinkingLevelMap | undef
 }
 
 export function getCachedModels(mode: QoderMode): QoderModelDef[] {
-  const cachePath = getQoderCachePath(mode);
-  if (existsSync(cachePath)) {
-    try {
-      const data = JSON.parse(readFileSync(cachePath, "utf8"));
-      if (data && Array.isArray(data.models)) {
-        const models = data.models.map((model: QoderModelDef) => {
-          const config = data.configs?.[model.id] as QoderModelEntry | undefined;
-          const display = config?.display_name;
-          const staticModel = (mode === "cn" ? staticCnModels : staticModels).find(
-            (seed) => seed.upstreamKey === model.id,
-          );
-          if (display) return { ...model, id: toQoderModelId(display), name: display };
-          if (staticModel) return { ...model, id: staticModel.id, name: staticModel.name };
-          return model.name ? { ...model, id: toQoderModelId(model.name) } : model;
-        });
-        // Older releases injected `auto` without a corresponding service config.
-        // Keep an explicitly enabled service model, but drop the legacy fallback.
-        if (data.configs && typeof data.configs === "object" && !data.configs.auto) {
-          return models.filter((model: QoderModelDef) => model.id.toLowerCase() !== "auto");
-        }
-        return models;
-      }
-    } catch {}
+  const data = readParsedModelCache(mode);
+  if (data && Array.isArray(data.models)) {
+    const models = data.models.map((model: QoderModelDef) => {
+      const config = data.configs?.[model.id] as QoderModelEntry | undefined;
+      const display = config?.display_name;
+      const staticModel = (mode === "cn" ? staticCnModels : staticModels).find((seed) => seed.upstreamKey === model.id);
+      if (display) return { ...model, id: toQoderModelId(display), name: display };
+      if (staticModel) return { ...model, id: staticModel.id, name: staticModel.name };
+      return model.name ? { ...model, id: toQoderModelId(model.name) } : model;
+    });
+    // Older releases injected `auto` without a corresponding service config.
+    // Keep an explicitly enabled service model, but drop the legacy fallback.
+    if (data.configs && typeof data.configs === "object" && !data.configs.auto) {
+      return models.filter((model: QoderModelDef) => model.id.toLowerCase() !== "auto");
+    }
+    return models;
   }
   return mode === "cn" ? staticCnModels : staticModels;
 }
 
 export function getCachedModelConfig(modelId: string, mode: QoderMode): QoderModelEntry | null {
-  const cachePath = getQoderCachePath(mode);
-  if (existsSync(cachePath)) {
-    try {
-      const data = JSON.parse(readFileSync(cachePath, "utf8"));
-      const direct = data?.configs?.[modelId] as QoderModelEntry | undefined;
-      if (direct && toQoderModelId(direct.display_name) === modelId) {
-        return withMaxContextAsDefault(direct);
-      }
+  const data = readParsedModelCache(mode);
+  if (data) {
+    const direct = data.configs?.[modelId] as QoderModelEntry | undefined;
+    if (direct && toQoderModelId(direct.display_name) === modelId) {
+      return withMaxContextAsDefault(direct);
+    }
 
-      // Read old cache shapes without preserving their raw-key aliases.
-      const legacyEntry = Object.values(data?.configs || {}).find(
-        (entry) =>
-          entry && typeof entry === "object" && toQoderModelId((entry as QoderModelEntry).display_name) === modelId,
-      ) as QoderModelEntry | undefined;
-      if (legacyEntry) {
-        return withMaxContextAsDefault(legacyEntry);
-      }
-    } catch {}
+    // Read old cache shapes without preserving their raw-key aliases.
+    const legacyEntry = Object.values(data.configs || {}).find(
+      (entry) =>
+        entry && typeof entry === "object" && toQoderModelId((entry as QoderModelEntry).display_name) === modelId,
+    ) as QoderModelEntry | undefined;
+    if (legacyEntry) {
+      return withMaxContextAsDefault(legacyEntry);
+    }
   }
 
   const staticModel = (mode === "cn" ? staticCnModels : staticModels).find((model) => model.id === modelId);
@@ -577,16 +613,10 @@ function withMaxContextAsDefault(entry: QoderModelEntry): QoderModelEntry {
 }
 
 export function isCacheStale(mode: QoderMode): boolean {
-  const cachePath = getQoderCachePath(mode);
-  if (!existsSync(cachePath)) return true;
-  try {
-    const data = JSON.parse(readFileSync(cachePath, "utf8"));
-    if (!data || typeof data.updatedAt !== "number") return true;
-    // Stale if older than 1 hour
-    return Date.now() - data.updatedAt > 3600_000;
-  } catch {
-    return true;
-  }
+  const data = readParsedModelCache(mode);
+  if (!data || typeof data.updatedAt !== "number") return true;
+  // Stale if older than 1 hour
+  return Date.now() - data.updatedAt > 3600_000;
 }
 
 export async function updateQoderModelsCache(
@@ -670,8 +700,6 @@ export async function updateQoderModelsCache(
       configs,
     };
 
-    const cachePath = getQoderCachePath(mode);
-    mkdirSync(dirname(cachePath), { recursive: true });
-    writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), "utf-8");
+    writeParsedModelCache(mode, cacheData);
   } catch {}
 }

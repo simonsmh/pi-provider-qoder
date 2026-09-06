@@ -12,6 +12,8 @@ export const THINKING_TAG_VARIANTS: Array<{ open: string; close: string }> = [
   { open: "<thought>", close: "</thought>" },
 ];
 
+const ALL_THINKING_TAGS: string[] = THINKING_TAG_VARIANTS.flatMap((variant) => [variant.open, variant.close]);
+
 function getTrailingPossibleTagPrefixLength(text: string, tag: string): number {
   const maxPrefixLength = Math.min(text.length, tag.length - 1);
   for (let len = maxPrefixLength; len > 0; len--) {
@@ -154,8 +156,7 @@ export class ThinkingTagParser {
     // No complete tag yet. Hold back any trailing prefix that could be the
     // start of an opener OR a closer, so a tag split across stream deltas is
     // not partially emitted as text.
-    const allTags = THINKING_TAG_VARIANTS.flatMap((variant) => [variant.open, variant.close]);
-    const trailingPrefixLength = getMaxTrailingPossibleTagPrefixLength(this.textBuffer, allTags);
+    const trailingPrefixLength = getMaxTrailingPossibleTagPrefixLength(this.textBuffer, ALL_THINKING_TAGS);
     const safeLen = this.textBuffer.length - trailingPrefixLength;
     if (safeLen > 0) {
       this.emitText(this.textBuffer.slice(0, safeLen));

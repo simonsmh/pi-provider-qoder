@@ -2,21 +2,27 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCachedModelConfig, getCachedModels, updateQoderModelsCache } from "../catalog.js";
+import { clearQoderModelsMemCache, getCachedModelConfig, getCachedModels, updateQoderModelsCache } from "../catalog.js";
 import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
+function testHome(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 const CACHE_PATHS = {
-  global: join(homedir(), ".pi", "agent", "qoder-models-cache.json"),
-  cn: join(homedir(), ".pi", "agent", "qoder-cn-models-cache.json"),
+  global: join(testHome(), ".pi", "agent", "qoder-models-cache.json"),
+  cn: join(testHome(), ".pi", "agent", "qoder-cn-models-cache.json"),
 };
 let originalCaches: Record<keyof typeof CACHE_PATHS, string | undefined>;
 
 beforeEach(() => {
+  clearQoderModelsMemCache();
   originalCaches = {
     global: existsSync(CACHE_PATHS.global) ? readFileSync(CACHE_PATHS.global, "utf8") : undefined,
     cn: existsSync(CACHE_PATHS.cn) ? readFileSync(CACHE_PATHS.cn, "utf8") : undefined,
   };
   for (const path of Object.values(CACHE_PATHS)) rmSync(path, { force: true });
+  clearQoderModelsMemCache();
 });
 
 afterEach(() => {
@@ -27,6 +33,7 @@ afterEach(() => {
     if (original === undefined) rmSync(path, { force: true });
     else writeFileSync(path, original, "utf8");
   }
+  clearQoderModelsMemCache();
 });
 
 describe("Qoder model cache", () => {
@@ -145,6 +152,7 @@ describe("Qoder model cache", () => {
       }),
       "utf8",
     );
+    clearQoderModelsMemCache();
 
     expect(getCachedModels("global").map((model) => model.id)).toEqual(["Ultimate"]);
   });
@@ -190,5 +198,27 @@ describe("Qoder model cache", () => {
 
     const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
     expect(cache.models[0].contextWindow).toBe(200000);
+  });
+
+  it("serves getCachedModelConfig from memory after the cache file is removed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            chat: [{ key: "lite", enable: true, display_name: "Lite" }],
+          }),
+      }),
+    );
+
+    await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+    expect(getCachedModelConfig("Lite", "global")?.key).toBe("lite");
+
+    // Hot-path mem cache must keep serving without touching disk again.
+    rmSync(CACHE_PATHS.global, { force: true });
+    expect(existsSync(CACHE_PATHS.global)).toBe(false);
+    expect(getCachedModelConfig("Lite", "global")?.key).toBe("lite");
+    expect(getCachedModels("global").map((m) => m.id)).toEqual(["Lite"]);
   });
 });

@@ -15,11 +15,14 @@ for (let i = 0; i < qoderStdAlphabet.length; i++) {
 // Qoder uses "$" instead of standard Base64 "=" padding.
 encodeTable["=".charCodeAt(0)] = "$".charCodeAt(0);
 
-export function qoderEncodeBody(plaintext: string | Buffer): string {
+/**
+ * Encode a request body with Qoder's custom Base64 alphabet and block reorder.
+ * Returns a Buffer of ASCII bytes identical to the previous string encoding.
+ */
+export function qoderEncodeBody(plaintext: string | Buffer): Buffer {
   const std = Buffer.isBuffer(plaintext) ? plaintext.toString("base64") : Buffer.from(plaintext).toString("base64");
 
-  const src = Buffer.from(std, "ascii");
-  const n = src.length;
+  const n = std.length;
   const a = Math.floor(n / 3);
 
   const out = Buffer.allocUnsafe(n);
@@ -28,19 +31,19 @@ export function qoderEncodeBody(plaintext: string | Buffer): string {
   // Equivalent to:
   // std.slice(n - a) + std.slice(a, n - a) + std.slice(0, a)
   //
-  // Translate directly into the output buffer to avoid building a large
-  // rearranged string and repeatedly concatenating one-character strings.
+  // Translate directly into the output buffer via charCodeAt to avoid an
+  // intermediate Buffer.from(std, "ascii") copy of the base64 string.
   for (let i = n - a; i < n; i++) {
-    out[dst++] = encodeTable[src[i]];
+    out[dst++] = encodeTable[std.charCodeAt(i)];
   }
 
   for (let i = a; i < n - a; i++) {
-    out[dst++] = encodeTable[src[i]];
+    out[dst++] = encodeTable[std.charCodeAt(i)];
   }
 
   for (let i = 0; i < a; i++) {
-    out[dst++] = encodeTable[src[i]];
+    out[dst++] = encodeTable[std.charCodeAt(i)];
   }
 
-  return out.toString("ascii");
+  return out;
 }

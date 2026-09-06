@@ -2,12 +2,17 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { autoLoginQoderFromEnvironment, getCachedCredentials, getQoderPatForMode } from "../auth/oauth.js";
+import {
+  autoLoginQoderFromEnvironment,
+  clearQoderAuthMemCache,
+  getCachedCredentials,
+  getQoderPatForMode,
+} from "../auth/oauth.js";
 import { credentialsFromPat } from "../auth/pat.js";
 import { updateQoderModelsCache } from "../catalog.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
-const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
+const AUTH_FILE = join(process.env.HOME || process.env.USERPROFILE || homedir(), ".pi", "agent", "auth.json");
 
 vi.mock("../auth/pat.js", () => ({
   credentialsFromPat: vi.fn().mockResolvedValue({
@@ -39,6 +44,7 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
+    clearQoderAuthMemCache();
     originalAuth = existsSync(AUTH_FILE) ? readFileSync(AUTH_FILE, "utf8") : undefined;
   });
 
@@ -46,6 +52,7 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
     process.env = originalEnv;
     if (originalAuth === undefined) rmSync(AUTH_FILE, { force: true });
     else writeFileSync(AUTH_FILE, originalAuth, "utf8");
+    clearQoderAuthMemCache();
   });
 
   it("extracts PAT correctly from env for global and CN mode", () => {

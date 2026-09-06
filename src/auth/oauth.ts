@@ -16,8 +16,6 @@ export interface QoderCredentials extends OAuthCredentials {
   machineID: string;
 }
 
-const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
-
 /**
  * `AuthStorage` is not part of every pi-coding-agent release's public exports,
  * so it is read off the module namespace instead of imported by name: a missing
@@ -28,6 +26,45 @@ const AuthStorage = (
     AuthStorage?: { create?: () => { set: (providerID: string, credentials: unknown) => void } };
   }
 ).AuthStorage;
+
+const identityCache = new Map<string, QoderCredentials>();
+
+function getHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
+function getAuthFilePath(): string {
+  return join(getHomeDir(), ".pi", "agent", "auth.json");
+}
+
+/** Memoized parse of auth.json; invalidated on save. undefined = not loaded. */
+let authFileMem: { path: string; data: Record<string, unknown> } | null | undefined;
+
+/** Clear process-memory auth caches (used by tests that mutate auth.json). */
+export function clearQoderAuthMemCache(): void {
+  authFileMem = undefined;
+  identityCache.clear();
+}
+
+function readAuthFileCached(): Record<string, unknown> | null {
+  const authPath = getAuthFilePath();
+  if (authFileMem !== undefined) {
+    if (authFileMem === null) return null;
+    if (authFileMem.path === authPath) return authFileMem.data;
+  }
+  if (!existsSync(authPath)) {
+    authFileMem = null;
+    return null;
+  }
+  try {
+    const data = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, unknown>;
+    authFileMem = { path: authPath, data };
+    return data;
+  } catch {
+    authFileMem = null;
+    return null;
+  }
+}
 
 /** Return the PAT exposed through the environment for a provider mode. */
 export function getQoderPatForMode(mode: QoderMode): string {
@@ -40,18 +77,20 @@ export function getQoderPatForMode(mode: QoderMode): string {
 
 function saveCredentialsToAuthFile(providerID: string, credentials: OAuthCredentials): void {
   try {
-    const dir = dirname(AUTH_FILE);
+    const authPath = getAuthFilePath();
+    const dir = dirname(authPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    let auth: Record<string, unknown> = {};
-    if (existsSync(AUTH_FILE)) {
-      try {
-        auth = JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
-      } catch {}
-    }
+    const existing = readAuthFileCached();
+    const auth: Record<string, unknown> = existing ? { ...existing } : {};
     auth[providerID] = { type: "oauth", ...credentials };
-    writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), { encoding: "utf-8", mode: 0o600 });
+    writeFileSync(authPath, JSON.stringify(auth, null, 2), { encoding: "utf-8", mode: 0o600 });
+    authFileMem = { path: authPath, data: auth };
+    const q = credentials as QoderCredentials;
+    if (q.access && q.userID) {
+      identityCache.set(`${providerID}:${q.access}`, q);
+    }
   } catch (err) {
     console.error(`[pi-provider-qoder] Failed to write auth storage for ${providerID}:`, err);
   }
@@ -94,19 +133,17 @@ export async function autoLoginQoderFromEnvironment(providerID: string, mode: Qo
  * This is best-effort and falls back to null so callers can use placeholders.
  */
 export function getCachedCredentials(_accessToken: string, providerID = "qoder"): QoderCredentials | null {
-  if (existsSync(AUTH_FILE)) {
-    try {
-      const auth = JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
-      const creds = auth?.[providerID] || (providerID === "qoder" ? auth?.qoder : null);
-      if (creds?.userID || creds?.access) {
-        return creds as QoderCredentials;
-      }
-    } catch {}
+  const auth = readAuthFileCached();
+  if (!auth) return null;
+  const creds = (auth[providerID] || (providerID === "qoder" ? auth.qoder : null)) as QoderCredentials | null;
+  if (creds?.userID || creds?.access) {
+    if (creds.access && creds.userID) {
+      identityCache.set(`${providerID}:${creds.access}`, creds);
+    }
+    return creds;
   }
   return null;
 }
-
-const identityCache = new Map<string, QoderCredentials>();
 
 /**
  * Resolve the Qoder identity (userID/email/name/machineID) for a chat request.
@@ -122,12 +159,15 @@ export async function resolveQoderIdentity(
   mode: QoderMode,
 ): Promise<QoderCredentials> {
   const region = getQoderRegionConfig(mode);
-  const cached = getCachedCredentials(accessToken, providerID);
-  if (cached?.userID) return cached;
-
   const cacheKey = `${providerID}:${accessToken}`;
   const mem = identityCache.get(cacheKey);
   if (mem?.userID) return mem;
+
+  const cached = getCachedCredentials(accessToken, providerID);
+  if (cached?.userID) {
+    identityCache.set(cacheKey, cached);
+    return cached;
+  }
 
   const info = await fetchUserInfo(accessToken, mode);
   const machineID = getMachineId();

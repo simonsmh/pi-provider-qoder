@@ -268,8 +268,7 @@ export function streamQoder(
       };
 
       const bodyBytes = Buffer.from(JSON.stringify(reqBody));
-      const encodedBody = qoderEncodeBody(bodyBytes);
-      const encodedBytes = Buffer.from(encodedBody, "utf8");
+      const encodedBytes = qoderEncodeBody(bodyBytes);
 
       const chatURL = getQoderChatURL(providerMode);
 
@@ -294,7 +293,7 @@ export function streamQoder(
           "X-Model-Source": modelSource,
           ...headers,
         },
-        body: encodedBytes,
+        body: encodedBytes as unknown as BodyInit,
         signal: options?.signal,
       });
 
@@ -307,6 +306,7 @@ export function streamQoder(
       if (!reader) throw new Error("No response body");
       const decoder = new TextDecoder();
       let buffer = "";
+      let bufferStart = 0;
 
       let contentBlockIndex = -1;
       let thinkingBlockIndex = -1;
@@ -328,14 +328,20 @@ export function streamQoder(
         const { done, value } = await reader.read();
         if (done) break;
 
+        // Drop consumed prefix before appending so we do not keep growing a
+        // dead head of the string across chunks.
+        if (bufferStart > 0) {
+          buffer = buffer.substring(bufferStart);
+          bufferStart = 0;
+        }
         buffer += decoder.decode(value, { stream: true });
 
         while (true) {
-          const lineEnd = buffer.indexOf("\n");
+          const lineEnd = buffer.indexOf("\n", bufferStart);
           if (lineEnd === -1) break;
 
-          const line = buffer.substring(0, lineEnd).trim();
-          buffer = buffer.substring(lineEnd + 1);
+          const line = buffer.substring(bufferStart, lineEnd).trim();
+          bufferStart = lineEnd + 1;
 
           if (!line.startsWith("data:")) continue;
 
