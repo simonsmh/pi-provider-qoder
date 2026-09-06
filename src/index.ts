@@ -1,5 +1,4 @@
 import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
-import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import {
   autoLoginQoderFromEnvironment,
@@ -20,15 +19,18 @@ type OAuthConfigWithUsage = NonNullable<ProviderConfig["oauth"]> & {
 
 const QODER_API = "qoder-api" as Api;
 
-function registerQoderApi(): void {
-  registerApiProvider(
-    {
-      api: QODER_API,
-      stream: streamQoder,
-      streamSimple: streamQoder,
-    },
-    "provider:qoder",
-  );
+async function registerQoderApi(): Promise<void> {
+  try {
+    const compat = await import("@earendil-works/pi-ai/compat");
+    const register = (compat as Record<string, unknown>).registerApiProvider;
+    if (typeof register !== "function") return; // OMP / hosts without the export
+    (register as (config: unknown, source: string) => void)(
+      { api: QODER_API, stream: streamQoder, streamSimple: streamQoder },
+      "provider:qoder",
+    );
+  } catch {
+    // Host has no compat registry; registerProvider(streamSimple) is enough.
+  }
 }
 
 function modelsForProvider(mode: QoderMode, providerID: string): Model<Api>[] {
@@ -90,7 +92,7 @@ async function refreshModelsAtStartup(mode: QoderMode): Promise<void> {
 }
 
 export default async function (pi: ExtensionAPI) {
-  registerQoderApi();
+  await registerQoderApi();
 
   for (const mode of QODER_MODES) {
     const providerID = getQoderRegionConfig(mode).providerID;

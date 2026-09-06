@@ -4,6 +4,7 @@ A [pi](https://shittycodingagent.ai/) extension that connects pi to Qoder.
 
 ```bash
 pi install npm:pi-provider-qoder
+# or: omp install npm:pi-provider-qoder
 ```
 
 ```bash

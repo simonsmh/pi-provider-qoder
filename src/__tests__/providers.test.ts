@@ -18,6 +18,7 @@ afterEach(() => {
     else process.env[name] = value;
   }
   vi.unstubAllGlobals();
+  vi.doUnmock("@earendil-works/pi-ai/compat");
   vi.resetModules();
 });
 
@@ -88,8 +89,15 @@ describe("qoder-api registry", () => {
   it("registers qoder-api so global streamSimple works for both regions", async () => {
     for (const name of patEnvNames) delete process.env[name];
 
-    // Import compat and the extension in the same test. afterEach resetModules
-    // would otherwise give them separate copies of the API registry Map.
+    const actual = await vi.importActual<typeof import("@earendil-works/pi-ai/compat")>("@earendil-works/pi-ai/compat");
+    const registerSpy = vi.fn((...args: Parameters<typeof actual.registerApiProvider>) => {
+      return actual.registerApiProvider(...args);
+    });
+    vi.doMock("@earendil-works/pi-ai/compat", () => ({
+      ...actual,
+      registerApiProvider: registerSpy,
+    }));
+
     const { getApiProvider, streamSimple, unregisterApiProviders } = await import("@earendil-works/pi-ai/compat");
     const { default: registerProviders } = await import("../index.js");
     // Node caches node_modules ESM, so a prior test in this file may already
@@ -113,6 +121,7 @@ describe("qoder-api registry", () => {
 
     await registerProviders(pi as never);
 
+    expect(registerSpy).toHaveBeenCalledTimes(1);
     expect(registerProvider).toHaveBeenCalledTimes(2);
     expect(providers.has("qoder")).toBe(true);
     expect(providers.has("qoder-cn")).toBe(true);
@@ -128,5 +137,34 @@ describe("qoder-api registry", () => {
     expect(() => streamSimple(liteModel("qoder-cn") as never, emptyContext)).not.toThrow(
       /No API provider registered for api: qoder-api/,
     );
+  });
+
+  it("still registers providers when registerApiProvider is absent (OMP-style)", async () => {
+    for (const name of patEnvNames) delete process.env[name];
+
+    vi.doMock("@earendil-works/pi-ai/compat", () => ({
+      // OMP bundled pi-ai/compat does not export registerApiProvider.
+    }));
+
+    const { default: registerProviders } = await import("../index.js");
+
+    const providers = new Map<string, Record<string, unknown>>();
+    const registerProvider = vi.fn((providerID: string, config: Record<string, unknown>) => {
+      providers.set(providerID, config);
+    });
+    const pi = {
+      registerProvider,
+      on: vi.fn(),
+    };
+
+    await expect(registerProviders(pi as never)).resolves.toBeUndefined();
+
+    expect(registerProvider).toHaveBeenCalledTimes(2);
+    expect(providers.has("qoder")).toBe(true);
+    expect(providers.has("qoder-cn")).toBe(true);
+    expect(providers.get("qoder")?.api).toBe("qoder-api");
+    expect(providers.get("qoder-cn")?.api).toBe("qoder-api");
+    expect(typeof providers.get("qoder")?.streamSimple).toBe("function");
+    expect(typeof providers.get("qoder-cn")?.streamSimple).toBe("function");
   });
 });
