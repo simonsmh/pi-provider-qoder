@@ -6,9 +6,11 @@ import type {
   Context,
   Model,
   ToolCall,
+  TranscriptContext,
 } from "@earendil-works/pi-ai";
+import * as PiAi from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamQoder } from "../protocol/stream.js";
+import { resolveRequestContext, streamQoder } from "../protocol/stream.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
 // Pin the identity so the mocked fetch below only ever serves the chat request.
@@ -105,6 +107,48 @@ function makeContext(): Context {
   } as unknown as Context;
 }
 
+/**
+ * Build the TranscriptContext pi-ai >=0.86 actually hands providers: the system
+ * prompt and tool declarations are folded into a leading system message by
+ * normalizeContext(), and there are NO top-level `systemPrompt` / `tools`
+ * fields. This is the shape that regressed tool binding in 0.4.5.
+ */
+function makeTranscriptContext(): TranscriptContext {
+  return PiAi.normalizeContext({
+    systemPrompt: "you are helpful",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [
+      {
+        name: "read",
+        description: "read a file",
+        parameters: { type: "object", properties: { path: { type: "string" } } },
+      },
+    ],
+  } as unknown as Context);
+}
+
+/** Reverse the Qoder body encoding and parse the request JSON. */
+interface DecodedQoderBody {
+  tools: Array<{ type: string; function: { name: string; description?: string; parameters?: unknown } }>;
+  messages: Array<{ role: string; content?: unknown }>;
+  [key: string]: unknown;
+}
+
+function decodeQoderBody(init: RequestInit | undefined): DecodedQoderBody {
+  const custom = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
+  const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const encoded = Buffer.from(init?.body as Uint8Array).toString("utf8");
+  const rearranged = [...encoded]
+    .map((character) => (character === "$" ? "=" : standard[custom.indexOf(character)] || character))
+    .join("");
+  const third = Math.floor(rearranged.length / 3);
+  const base64 =
+    rearranged.slice(rearranged.length - third) +
+    rearranged.slice(third, rearranged.length - third) +
+    rearranged.slice(0, third);
+  return JSON.parse(Buffer.from(base64, "base64").toString("utf8")) as DecodedQoderBody;
+}
+
 async function consume(stream: AssistantMessageEventStream): Promise<AssistantMessageEvent[]> {
   const events: AssistantMessageEvent[] = [];
   for await (const ev of stream) {
@@ -161,6 +205,29 @@ describe("streamQoder", () => {
     };
     expect(body.chat_context.extra.modelConfig.key).toBe("lite");
     expect(body.model_config.key).toBe("lite");
+  });
+
+  it("binds tools delivered via the transcript system message (pi-ai >=0.86)", async () => {
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(streamQoder(makeModel(), makeTranscriptContext(), { apiKey: "fake" }));
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    const body = decodeQoderBody(init);
+
+    // The tool declared on the transcript's leading system message must reach
+    // the request as a structured OpenAI function — not be dropped to `[]`,
+    // which is what made the model free-form ChatML tool calls as plain text.
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]).toMatchObject({
+      type: "function",
+      function: { name: "read", description: "read a file" },
+    });
+
+    // The system prompt is recovered from the transcript and re-injected as a
+    // leading role:system message (Qoder ignores the top-level `system` field).
+    expect(body.messages[0]).toMatchObject({ role: "system", content: "you are helpful" });
+    expect(body.messages.some((m: { role: string }) => m.role === "user")).toBe(true);
   });
 
   it("binds chat hosts to provider ids even when only a CN PAT is set", async () => {
@@ -496,5 +563,55 @@ describe("streamQoder", () => {
     const error = events.find((event) => event.type === "error") as { error: AssistantMessage };
     expect(error.error.stopReason).toBe("aborted");
     expect(events.find((event) => event.type === "done")).toBeUndefined();
+  });
+});
+
+describe("resolveRequestContext", () => {
+  const flatContext = {
+    systemPrompt: "legacy prompt",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ name: "bash", description: "run a command", parameters: { type: "object", properties: {} } }],
+  } as unknown as Context;
+
+  it("falls back to flat Context fields when transcript helpers are absent (pi-ai <=0.85)", () => {
+    // An empty helpers object simulates the pi-ai 0.85 namespace, which exports
+    // none of the transcript helpers. The provider must still bind tools and the
+    // system prompt from the legacy top-level Context fields instead of crashing
+    // or shipping `tools: []`.
+    const resolved = resolveRequestContext({}, flatContext);
+    expect(resolved.systemText).toBe("legacy prompt");
+    expect(resolved.tools.map((t) => t.name)).toEqual(["bash"]);
+    expect(resolved.messages).toBe(flatContext.messages);
+  });
+
+  it("treats a partial transcript toolkit as legacy (defensive: missing getSystemMessageText)", () => {
+    // All transcript helpers except getSystemMessageText. Without the full set we
+    // cannot reconstruct the system prompt from the transcript, so the resolver
+    // must fall back to the flat Context fields rather than drop the prompt.
+    const partial = {
+      collapseSystemMessages: PiAi.collapseSystemMessages,
+      getCurrentTools: PiAi.getCurrentTools,
+      getInitialSystemMessage: PiAi.getInitialSystemMessage,
+      withoutInitialSystemMessage: PiAi.withoutInitialSystemMessage,
+    };
+    const resolved = resolveRequestContext(partial, flatContext);
+    expect(resolved.systemText).toBe("legacy prompt");
+    expect(resolved.tools.map((t) => t.name)).toEqual(["bash"]);
+  });
+
+  it("resolves tools + prompt from the transcript when helpers are present (pi-ai >=0.86)", () => {
+    const transcript = PiAi.normalizeContext({
+      systemPrompt: "you are helpful",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "read", description: "read a file", parameters: { type: "object", properties: {} } }],
+    } as unknown as Context);
+
+    const resolved = resolveRequestContext(PiAi, transcript);
+    expect(resolved.tools.map((t) => t.name)).toEqual(["read"]);
+    expect(resolved.systemText).toBe("you are helpful");
+    // The consolidated leading system message is dropped from the conversation
+    // (reqBody re-injects systemText as its own role:system message).
+    expect(resolved.messages.some((m) => m.role === "system")).toBe(false);
+    expect(resolved.messages.some((m) => m.role === "user")).toBe(true);
   });
 });
