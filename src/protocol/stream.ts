@@ -10,6 +10,7 @@ import {
   type SimpleStreamOptions,
   type TextContent,
   type ThinkingContent,
+  type Tool,
   type ToolCall,
 } from "@earendil-works/pi-ai";
 import { resolveQoderIdentity } from "../auth/oauth.js";
@@ -82,6 +83,33 @@ function contentToText(content: unknown): string {
   return "";
 }
 
+// pi 0.86 folds `Context.systemPrompt` and `Context.tools` into a leading
+// system message before it calls a registered api provider (`normalizeContext`
+// in pi-ai's transcript helpers), so on 0.86+ hosts both fields are undefined
+// and the model would receive neither instructions nor tools. The transcript
+// helpers replay that message back into the current prompt and tool set; they
+// are absent before 0.86, where the raw fields are still authoritative.
+type TranscriptHelpers = {
+  getCurrentTools?: (messages: readonly { role: string }[]) => Tool[];
+  getCurrentSystemPrompt?: (messages: readonly { role: string }[]) => string;
+};
+
+/**
+ * Read the prompt and tools from either context shape. Each helper falls back
+ * to the raw field on its own, so a host that runs the helpers over a context
+ * missing the leading system message still contributes what it has.
+ */
+function resolveContextInputs(context: Context): { systemPrompt: unknown; tools: Tool[] } {
+  const helpers = PiAi as unknown as TranscriptHelpers;
+  const replayedPrompt = helpers.getCurrentSystemPrompt?.(context.messages) ?? "";
+  const replayedTools = helpers.getCurrentTools?.(context.messages) ?? [];
+
+  return {
+    systemPrompt: replayedPrompt || context.systemPrompt || "",
+    tools: replayedTools.length > 0 ? replayedTools : context.tools || [],
+  };
+}
+
 export function streamQoder(
   model: Model<Api>,
   context: Context,
@@ -143,11 +171,12 @@ export function streamQoder(
 
       const isReasoning = !!modelConfig.is_reasoning;
 
+      const { systemPrompt, tools } = resolveContextInputs(context);
       const normalizedMessages = transformMessagesForQoder(context.messages);
       // OMP may supply the system prompt as a single-element content array;
       // Qoder MessagesInputDto#content is a String and rejects an array with
       // "Execution failed: set property ... MessagesInputDto#content". Normalize.
-      const systemText = contentToText(context.systemPrompt || "");
+      const systemText = contentToText(systemPrompt);
 
       let lastUserText = "";
       for (let i = normalizedMessages.length - 1; i >= 0; i--) {
@@ -181,7 +210,7 @@ export function streamQoder(
         maxTokens = options.maxTokens;
       }
 
-      const toolsRaw = context.tools && context.tools.length > 0 ? transformTools(context.tools) : undefined;
+      const toolsRaw = tools.length > 0 ? transformTools(tools) : undefined;
       const recordID = stableChatRecordID(qoderModel, normalizedMessages, toolsRaw, maxTokens);
 
       // Map pi's thinking level (options.reasoning) to Qoder's request fields.

@@ -11,6 +11,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamQoder } from "../protocol/stream.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
+// streamQoder probes pi-ai for its transcript replay helpers at runtime. The
+// pinned dev dependency (0.85) does not export them, so stand them in here and
+// let each test decide what they return. Leaving them unset is the pre-0.86
+// path: no replay available, the raw Context fields are authoritative.
+const transcript = vi.hoisted(() => ({
+  helpers: {} as {
+    getCurrentTools?: (messages: readonly { role: string }[]) => unknown[];
+    getCurrentSystemPrompt?: (messages: readonly { role: string }[]) => string;
+  },
+}));
+
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
+  return {
+    ...actual,
+    getCurrentTools: (messages: readonly { role: string }[]) => transcript.helpers.getCurrentTools?.(messages),
+    getCurrentSystemPrompt: (messages: readonly { role: string }[]) =>
+      transcript.helpers.getCurrentSystemPrompt?.(messages),
+  };
+});
+
 // Pin the identity so the mocked fetch below only ever serves the chat request.
 // Without a resolved identity, streamQoder fetches /userinfo first and consumes
 // the mock response, leaving the chat read to fail on a locked stream.
@@ -85,6 +106,28 @@ const BLOCKED_SSE = sseEnvelope(
   "Not Acceptable",
 );
 
+/** Decode the obfuscated request body streamQoder sends to the gateway. */
+function decodeRequestBody(init: RequestInit | undefined): {
+  messages: Array<{ role: string; content: string }>;
+  tools: Array<{ function: { name: string } }>;
+  chat_context: { extra: { modelConfig: { key: string } } };
+  model_config: { key: string };
+} {
+  const custom = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
+  const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const encoded = Buffer.from(init?.body as Uint8Array).toString("utf8");
+  const rearranged = [...encoded]
+    .map((character) => (character === "$" ? "=" : standard[custom.indexOf(character)] || character))
+    .join("");
+  const third = Math.floor(rearranged.length / 3);
+  const base64 = rearranged.slice(-third) + rearranged.slice(third, -third) + rearranged.slice(0, third);
+  return JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+}
+
+function makeTool(name: string): { name: string; description: string; parameters: object } {
+  return { name, description: `${name} tool`, parameters: { type: "object", properties: {} } };
+}
+
 function mockFetch(body: string): typeof fetch {
   const response = new Response(body, {
     status: 200,
@@ -118,6 +161,7 @@ describe("streamQoder", () => {
   const originalFetch = globalThis.fetch;
   const originalCnPat = process.env.QODERCN_PERSONAL_ACCESS_TOKEN;
   afterEach(() => {
+    transcript.helpers = {};
     globalThis.fetch = originalFetch;
     if (originalCnPat === undefined) delete process.env.QODERCN_PERSONAL_ACCESS_TOKEN;
     else process.env.QODERCN_PERSONAL_ACCESS_TOKEN = originalCnPat;
@@ -144,23 +188,81 @@ describe("streamQoder", () => {
     const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
     expect(init?.headers).toEqual(expect.objectContaining({ "X-Model-Key": "lite" }));
 
-    const custom = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
-    const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const encoded = Buffer.from(init?.body as Uint8Array).toString("utf8");
-    const rearranged = [...encoded]
-      .map((character) => (character === "$" ? "=" : standard[custom.indexOf(character)] || character))
-      .join("");
-    const third = Math.floor(rearranged.length / 3);
-    const base64 =
-      rearranged.slice(rearranged.length - third) +
-      rearranged.slice(third, rearranged.length - third) +
-      rearranged.slice(0, third);
-    const body = JSON.parse(Buffer.from(base64, "base64").toString("utf8")) as {
-      chat_context: { extra: { modelConfig: { key: string } } };
-      model_config: { key: string };
-    };
+    const body = decodeRequestBody(init);
     expect(body.chat_context.extra.modelConfig.key).toBe("lite");
     expect(body.model_config.key).toBe("lite");
+  });
+
+  it("reads the prompt and tools out of a 0.86 TranscriptContext", async () => {
+    // pi 0.86+ normalizes the context before calling a registered api provider:
+    // `systemPrompt` and `tools` move into a leading system message (tools under
+    // `toolsAdded`) and the fields disappear. Reading them directly sent an
+    // empty request — no instructions, no tool definitions — so the model
+    // ignored its system prompt and never called a tool.
+    transcript.helpers.getCurrentSystemPrompt = () => "be terse";
+    transcript.helpers.getCurrentTools = () => [makeTool("bash")];
+
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(
+      streamQoder(
+        makeModel(),
+        {
+          messages: [
+            { role: "system", content: "be terse", toolsAdded: [makeTool("bash")] },
+            { role: "user", content: "hi" },
+          ],
+        } as unknown as Context,
+        { apiKey: "fake" },
+      ),
+    );
+
+    const body = decodeRequestBody(vi.mocked(globalThis.fetch).mock.calls[0][1]);
+    expect(body.messages[0]).toEqual({ role: "system", content: "be terse" });
+    expect(body.tools.map((tool) => tool.function.name)).toEqual(["bash"]);
+  });
+
+  it("keeps the raw prompt and tools when no transcript replay is available", async () => {
+    // A pre-0.86 host passes them as Context fields. The helpers are absent
+    // there, so the fallback has to carry the request on its own.
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(
+      streamQoder(
+        makeModel(),
+        {
+          systemPrompt: "raw prompt",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [makeTool("read")],
+        } as unknown as Context,
+        { apiKey: "fake" },
+      ),
+    );
+
+    const body = decodeRequestBody(vi.mocked(globalThis.fetch).mock.calls[0][1]);
+    expect(body.messages[0]).toEqual({ role: "system", content: "raw prompt" });
+    expect(body.tools.map((tool) => tool.function.name)).toEqual(["read"]);
+  });
+
+  it("falls back per field when only part of the replay is populated", async () => {
+    // The two reads are independent: a transcript with a prompt but no tool
+    // declarations must not discard tools that arrived as a raw field.
+    transcript.helpers.getCurrentSystemPrompt = () => "replayed prompt";
+
+    globalThis.fetch = mockFetch(SUCCESS_SSE);
+    await consume(
+      streamQoder(
+        makeModel(),
+        {
+          systemPrompt: "raw prompt",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [makeTool("read")],
+        } as unknown as Context,
+        { apiKey: "fake" },
+      ),
+    );
+
+    const body = decodeRequestBody(vi.mocked(globalThis.fetch).mock.calls[0][1]);
+    expect(body.messages[0]).toEqual({ role: "system", content: "replayed prompt" });
+    expect(body.tools.map((tool) => tool.function.name)).toEqual(["read"]);
   });
 
   it("binds chat hosts to provider ids even when only a CN PAT is set", async () => {
