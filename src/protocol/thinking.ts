@@ -49,6 +49,42 @@ export function stripThinkingTags(text: string): string {
   return out;
 }
 
+// Qoder's gateway occasionally fails to turn a model's tool-call intent into
+// OpenAI-style `tool_calls` and leaks its internal DSML markup instead —
+// closing tags, into whichever channel it was halfway through. Seen in the
+// wild as a full-width DSML closing tag, a bare </invoke> or </parameter>, and
+// </function_call>, alone or repeated dozens of times. Left in place they poison
+// the thinking block, which the next turn replays into the prompt as a
+// <thinking>...</thinking> text block.
+const DSML_TAG =
+  /<\/?[\uFF5C|]{0,2}\s*DSML\s*[\uFF5C|]{0,2}[^>]*>|<\/?(?:invoke|invocation|parameter|function_call|function_calls)\b[^>]*>/g;
+
+// Two or more of those tags in a row at the end of the reasoning channel: the
+// signature of a turn where the model tried to call a tool and the gateway
+// dropped the call. A single literal tag inside prose does not match.
+const DEGENERATE_DSML_TAIL =
+  /(?:(?:<\/?(?:invoke|invocation|parameter|function_call|function_calls)\b[^>]*>)\s*|(?:<\/?[\uFF5C|]{0,2}\s*DSML\s*[\uFF5C|]{0,2}[^>]*>)\s*){2,}$/;
+
+/**
+ * Strip leaked DSML tool-call markup and collapse the blank lines it leaves.
+ */
+export function stripDsmlResidue(text: string): string {
+  return text.replace(DSML_TAG, "").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
+ * Whether a finished turn is the degenerate case above: nothing usable came
+ * back — no text, no executed tool call — and the reasoning channel ends in
+ * leaked markup. `rawReasoning` is that channel before stripDsmlResidue ran,
+ * because the residue is exactly what is being looked for.
+ */
+export function isDegenerateDsmlTurn(message: AssistantMessage, rawReasoning: string): boolean {
+  if (message.stopReason === "toolUse") return false;
+  const content = Array.isArray(message.content) ? message.content : [];
+  if (content.some((block) => block.type === "text" && block.text.trim().length > 0)) return false;
+  return DEGENERATE_DSML_TAIL.test(rawReasoning);
+}
+
 export class ThinkingTagParser {
   private textBuffer = "";
   private inThinking = false;

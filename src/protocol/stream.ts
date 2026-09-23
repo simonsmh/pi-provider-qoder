@@ -17,7 +17,7 @@ import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
 import { buildAuthHeaders, getMachineId } from "../cosy.js";
 import { getQoderChatURL, getQoderRegionConfig } from "../region.js";
 import { qoderEncodeBody } from "./encoding.js";
-import { stripThinkingTags, ThinkingTagParser } from "./thinking.js";
+import { isDegenerateDsmlTurn, stripDsmlResidue, stripThinkingTags, ThinkingTagParser } from "./thinking.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
 
 interface ToolCallState {
@@ -310,6 +310,10 @@ export function streamQoder(
 
       let contentBlockIndex = -1;
       let thinkingBlockIndex = -1;
+      // Tail of the reasoning channel before DSML residue is stripped. Only the
+      // tail matters (the degenerate-turn check looks for trailing markup), so
+      // this stays bounded instead of growing with the reply.
+      let rawReasoningTail = "";
       const toolCallsState: ToolCallState[] = [];
 
       const thinkingEnabled = (options?.reasoning as unknown) !== false && (options?.reasoning as unknown) !== "off";
@@ -408,10 +412,12 @@ export function streamQoder(
                 if (delta.reasoning_content) {
                   // Qoder's backend sometimes routes a literal `<thinking>`
                   // opener into reasoning_content (with the matching
-                  // `</thinking>` closer landing in the content stream). Strip
-                  // tag artifacts so the thinking block stays clean, matching
-                  // the SDK's ContentBlock model.
-                  const reasoningChunk = stripThinkingTags(delta.reasoning_content);
+                  // `</thinking>` closer landing in the content stream), and
+                  // sometimes leaks unparsed DSML tool-call markup there. Strip
+                  // both so the thinking block stays clean, matching the SDK's
+                  // ContentBlock model.
+                  rawReasoningTail = (rawReasoningTail + delta.reasoning_content).slice(-512);
+                  const reasoningChunk = stripDsmlResidue(stripThinkingTags(delta.reasoning_content));
                   if (reasoningChunk) {
                     if (thinkingBlockIndex === -1) {
                       thinkingBlockIndex = output.content.length;
@@ -584,6 +590,21 @@ export function streamQoder(
       if (toolCallsState.some((state) => state?.emittedStart)) {
         output.stopReason = "toolUse";
       }
+      // A turn the gateway stripped the tool call out of has no text and no tool
+      // call, so `stop` reads as a finished task: the agent loop ends the turn
+      // and the work dies with no error to retry. Report it instead.
+      if (isDegenerateDsmlTurn(output, rawReasoningTail)) {
+        output.stopReason = "error";
+        // "server error" is deliberate: pi-ai classifies an assistant error by
+        // matching its message (RETRYABLE_PROVIDER_ERROR_PATTERN), and that
+        // phrase is what makes the turn retryable instead of a dead end.
+        output.errorMessage =
+          "Qoder server error: degenerate model output (unparseable DSML tool-call markup, no tool call executed)";
+        stream.push({ type: "error", reason: "error", error: output });
+        stream.end();
+        return;
+      }
+
       // Otherwise keep whatever finish_reason set upstream (defaults to "stop").
       // Never overwrite a meaningful finish_reason ("length", "content_filter",
       // ...) with "stop".

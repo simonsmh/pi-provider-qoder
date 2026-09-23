@@ -8,6 +8,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import { stripDsmlResidue } from "./thinking.js";
 
 /** OpenAI-style tool definition sent to the Qoder API. */
 interface QoderTool {
@@ -144,8 +145,10 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
           if (block.type === "text") {
             content += (block as TextContent).text;
           } else if (block.type === "thinking") {
-            // Include thinking tags if reasoning is on
-            content += `<thinking>${(block as ThinkingContent).thinking}</thinking>\n\n`;
+            // Include thinking tags if reasoning is on. The stored text can still
+            // carry DSML tool-call markup the gateway leaked into the reasoning
+            // channel, and replaying it would feed that back as prompt text.
+            content += `<thinking>${stripDsmlResidue((block as ThinkingContent).thinking)}</thinking>\n\n`;
           } else if (block.type === "toolCall") {
             const tc = block as ToolCall;
             toolCalls.push({

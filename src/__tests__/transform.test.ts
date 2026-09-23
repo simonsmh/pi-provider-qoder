@@ -192,6 +192,25 @@ describe("transformMessagesForQoder", () => {
     expect(result[0].content).toContain("answer");
   });
 
+  it("strips DSML residue from a replayed thinking block", () => {
+    // A thinking block can still hold markup the gateway leaked into the
+    // reasoning channel. Replaying it verbatim feeds that markup back as prompt
+    // text on every following turn.
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "let me think</invoke>\n</invoke>\n</invoke>" },
+          { type: "text", text: "answer" },
+        ],
+      },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+    expect(result[0].content).toContain("<thinking>let me think");
+    expect(result[0].content).not.toContain("invoke");
+    expect(result[0].content).toContain("answer");
+  });
+
   it("handles toolResult messages", () => {
     const msgs = [
       {

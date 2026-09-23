@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { stripThinkingTags, ThinkingTagParser } from "../protocol/thinking.js";
+import { isDegenerateDsmlTurn, stripDsmlResidue, stripThinkingTags, ThinkingTagParser } from "../protocol/thinking.js";
 
 function createMockStream() {
   const events: AssistantMessageEvent[] = [];
@@ -303,5 +303,66 @@ describe("ThinkingTagParser", () => {
     expect(stripThinkingTags("plain text")).toBe("plain text");
     expect(stripThinkingTags("<thinking>")).toBe("");
     expect(stripThinkingTags("</thinking>")).toBe("");
+  });
+
+  // ── DSML residue ──────────────────────────────────────────────────────
+
+  // The gateway wraps its DSML tags in U+FF5C full-width bars.
+  const BAR = "\uFF5C";
+  const DSML = `${BAR}${BAR}DSML${BAR}${BAR}`;
+  const RESIDUE = `</${DSML} parameter>\n</${DSML} invoke>\n</${DSML} calls>`;
+
+  it("stripDsmlResidue removes the markup a dropped tool call leaks", () => {
+    // Verbatim tails from real sessions, without the reasoning prefix.
+    expect(stripDsmlResidue(`Let me read PudnResultListener and ReceiptBillDTO.${RESIDUE}`)).toBe(
+      "Let me read PudnResultListener and ReceiptBillDTO.\n\n",
+    );
+    expect(stripDsmlResidue(`</thinking>${RESIDUE}`)).toBe("</thinking>\n\n");
+    expect(stripDsmlResidue("reasoning</parameter>\n</invoke>\n</function_call>")).toBe("reasoning\n\n");
+  });
+
+  it("collapses the blank lines left by a wall of repeated residue", () => {
+    const repeated = Array.from({ length: 27 }, () => "</invoke>").join("\n");
+    expect(stripDsmlResidue(`think hard\n${repeated}`)).toBe("think hard\n\n");
+  });
+
+  it("treats prose as prose", () => {
+    expect(stripDsmlResidue("a < b and c > d\n\n\nnext")).toBe("a < b and c > d\n\nnext");
+  });
+
+  function degenerate(message: Partial<AssistantMessage>, rawReasoning: string): boolean {
+    return isDegenerateDsmlTurn(
+      { stopReason: "stop", content: [{ type: "thinking", thinking: "plan" }], ...message } as AssistantMessage,
+      rawReasoning,
+    );
+  }
+
+  it("flags a finished turn whose reasoning ends in dropped markup", () => {
+    expect(degenerate({}, `Let me look.${RESIDUE}`)).toBe(true);
+    expect(degenerate({}, "thinking</invoke>\n</invoke>")).toBe(true);
+  });
+
+  it("does not flag a turn that produced an answer", () => {
+    expect(
+      degenerate(
+        {
+          content: [
+            { type: "thinking", thinking: "plan" },
+            { type: "text", text: "here it is" },
+          ],
+        },
+        RESIDUE,
+      ),
+    ).toBe(false);
+    // Whitespace is not an answer, but it is not this failure either.
+    expect(degenerate({ content: [{ type: "text", text: "   " }] }, RESIDUE)).toBe(true);
+  });
+
+  it("does not flag a turn whose tool call was executed", () => {
+    expect(degenerate({ stopReason: "toolUse" }, `reasoning${RESIDUE}`)).toBe(false);
+  });
+
+  it("does not flag a single literal tag mentioned in normal reasoning", () => {
+    expect(degenerate({}, "the model emits </invoke> when it is done")).toBe(false);
   });
 });
