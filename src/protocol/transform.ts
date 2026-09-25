@@ -170,11 +170,12 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
       // Qoder's gateway drops assistant messages whose content is null, which
       // orphans the following tool_result and makes dmodel/ultimate upstreams
       // reject the request ("tool must follow a message with tool_calls").
-      // When an assistant turn has tool calls but no visible text, inject a
-      // single-space placeholder so the gateway keeps the message.
+      // When an assistant turn has tool calls or reasoning but no visible
+      // text, inject a placeholder so the gateway keeps the message and its
+      // reasoning history.
       const mapped: QoderMessage = {
         role: "assistant",
-        content: content || (toolCalls.length > 0 ? " " : null),
+        content: content || (toolCalls.length > 0 || reasoningContent ? " " : null),
       };
       if (reasoningContent) {
         mapped.reasoning_content = reasoningContent;

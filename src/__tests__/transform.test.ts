@@ -193,6 +193,19 @@ describe("transformMessagesForQoder", () => {
     expect(JSON.stringify(result)).not.toContain("<thinking>");
   });
 
+  it("keeps reasoning-only assistant messages non-null", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "I should check the details." }],
+      },
+    ] as unknown as Message[];
+
+    const result = transformMessagesForQoder(msgs);
+    expect(result[0].content).toBe(" ");
+    expect(result[0]).toMatchObject({ reasoning_content: "I should check the details." });
+  });
+
   it("strips DSML residue from replayed reasoning_content", () => {
     // A thinking block can still hold markup the gateway leaked into the
     // reasoning channel. Replaying it verbatim feeds that markup back as prompt
