@@ -177,7 +177,7 @@ describe("transformMessagesForQoder", () => {
     });
   });
 
-  it("handles assistant message with thinking block", () => {
+  it("replays assistant thinking through reasoning_content", () => {
     const msgs = [
       {
         role: "assistant",
@@ -188,11 +188,12 @@ describe("transformMessagesForQoder", () => {
       },
     ] as unknown as Message[];
     const result = transformMessagesForQoder(msgs);
-    expect(result[0].content).toContain("<thinking>let me think</thinking>");
-    expect(result[0].content).toContain("answer");
+    expect(result[0].content).toBe("answer");
+    expect(result[0]).toMatchObject({ reasoning_content: "let me think" });
+    expect(JSON.stringify(result)).not.toContain("<thinking>");
   });
 
-  it("strips DSML residue from a replayed thinking block", () => {
+  it("strips DSML residue from replayed reasoning_content", () => {
     // A thinking block can still hold markup the gateway leaked into the
     // reasoning channel. Replaying it verbatim feeds that markup back as prompt
     // text on every following turn.
@@ -206,9 +207,11 @@ describe("transformMessagesForQoder", () => {
       },
     ] as unknown as Message[];
     const result = transformMessagesForQoder(msgs);
-    expect(result[0].content).toContain("<thinking>let me think");
-    expect(result[0].content).not.toContain("invoke");
     expect(result[0].content).toContain("answer");
+    const reasoningContent = (result[0] as { reasoning_content?: string }).reasoning_content ?? "";
+    expect(reasoningContent).toContain("let me think");
+    expect(reasoningContent).not.toContain("invoke");
+    expect(JSON.stringify(result)).not.toContain("<thinking>");
   });
 
   it("handles toolResult messages", () => {
