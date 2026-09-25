@@ -6,11 +6,14 @@ import {
   type AssistantMessageEventStream,
   type Context,
   clampThinkingLevel,
+  type Message,
   type Model,
   type SimpleStreamOptions,
   type TextContent,
   type ThinkingContent,
+  type Tool,
   type ToolCall,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { resolveQoderIdentity } from "../auth/oauth.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
@@ -82,6 +85,86 @@ function contentToText(content: unknown): string {
   return "";
 }
 
+/**
+ * The pi-ai transcript helpers we feature-detect at runtime. Derived from the
+ * pi-ai namespace so the signatures stay in step; every member is optional
+ * because pi-ai <=0.85 does not export them at all.
+ */
+type TranscriptHelpers = Partial<
+  Pick<
+    typeof PiAi,
+    | "collapseSystemMessages"
+    | "getCurrentTools"
+    | "getInitialSystemMessage"
+    | "getSystemMessageText"
+    | "withoutInitialSystemMessage"
+  >
+>;
+
+/**
+ * Resolve the messages, system-prompt text, and tools for the Qoder request
+ * from EITHER pi-ai provider contract:
+ *
+ *  - pi-ai >=0.86 hands providers a `TranscriptContext` (`{ messages }` only):
+ *    `normalizeContext()` folds the system prompt and tool declarations into the
+ *    transcript's leading system message, so the legacy top-level
+ *    `context.systemPrompt` / `context.tools` are undefined. Resolve them via the
+ *    transcript helpers, and drop the consolidated leading system message from
+ *    the conversation (reqBody re-injects `systemText` as its own role:system
+ *    message, because Qoder ignores the top-level `system` field).
+ *  - pi-ai <=0.85 hands providers a flat `Context` with top-level
+ *    `systemPrompt` / `tools` and no transcript helpers.
+ *
+ * The helpers are passed in (as the pi-ai namespace) and feature-detected, so a
+ * single bundle runs on both: on 0.85 the namespace simply lacks them and we use
+ * the flat fields. Using a namespace import for this is deliberate — a named
+ * import of a 0.86-only export would throw at module-load time on 0.85.
+ */
+export function resolveRequestContext(
+  piAi: TranscriptHelpers,
+  context: Context,
+): { messages: Message[]; systemText: string; tools: Tool[] } {
+  const {
+    collapseSystemMessages,
+    getCurrentTools,
+    getInitialSystemMessage,
+    getSystemMessageText,
+    withoutInitialSystemMessage,
+  } = piAi;
+
+  // Require the FULL transcript toolkit — including getSystemMessageText — before
+  // taking the transcript path. If any helper is missing we cannot faithfully
+  // reconstruct the prompt + tools from the transcript, so fall back to the flat
+  // Context fields rather than silently dropping the system prompt (which is what
+  // happens if we resolve tools from the transcript but lack getSystemMessageText:
+  // context.systemPrompt is undefined under the >=0.86 contract).
+  const hasTranscript =
+    typeof collapseSystemMessages === "function" &&
+    typeof getCurrentTools === "function" &&
+    typeof getInitialSystemMessage === "function" &&
+    typeof getSystemMessageText === "function" &&
+    typeof withoutInitialSystemMessage === "function";
+
+  if (!hasTranscript) {
+    // pi-ai <=0.85: flat Context carries the prompt and tools directly.
+    return {
+      messages: context.messages,
+      systemText: contentToText(context.systemPrompt || ""),
+      tools: context.tools ?? [],
+    };
+  }
+
+  const collapsed = collapseSystemMessages(context as unknown as TranscriptContext);
+  const transcriptMessages = collapsed.messages;
+  const initialSystem = getInitialSystemMessage(transcriptMessages);
+  const tools = getCurrentTools(transcriptMessages);
+  const systemText = contentToText(
+    initialSystem && getSystemMessageText ? getSystemMessageText(initialSystem) : context.systemPrompt || "",
+  );
+  const messages = withoutInitialSystemMessage(transcriptMessages);
+  return { messages, systemText, tools };
+}
+
 export function streamQoder(
   model: Model<Api>,
   context: Context,
@@ -143,11 +226,16 @@ export function streamQoder(
 
       const isReasoning = !!modelConfig.is_reasoning;
 
-      const normalizedMessages = transformMessagesForQoder(context.messages);
+      // Resolve messages / system prompt / tools from whichever pi-ai contract
+      // is running (>=0.86 TranscriptContext, or <=0.85 flat Context). The
+      // transcript helpers are feature-detected inside, so one bundle runs on
+      // both. See resolveRequestContext.
+      const resolved = resolveRequestContext(PiAi, context);
+      const normalizedMessages = transformMessagesForQoder(resolved.messages);
       // OMP may supply the system prompt as a single-element content array;
       // Qoder MessagesInputDto#content is a String and rejects an array with
       // "Execution failed: set property ... MessagesInputDto#content". Normalize.
-      const systemText = contentToText(context.systemPrompt || "");
+      const systemText = resolved.systemText;
 
       let lastUserText = "";
       for (let i = normalizedMessages.length - 1; i >= 0; i--) {
@@ -181,7 +269,12 @@ export function streamQoder(
         maxTokens = options.maxTokens;
       }
 
-      const toolsRaw = context.tools && context.tools.length > 0 ? transformTools(context.tools) : undefined;
+      // resolved.tools already prefers the transcript (pi-ai >=0.86) and falls
+      // back to the legacy top-level context.tools (<=0.85). Without a bound
+      // tool list the request ships `tools: []`, the model gets no function
+      // schema, and it free-forms ChatML tool calls as plain text that never
+      // execute — the regression this fixes.
+      const toolsRaw = resolved.tools.length > 0 ? transformTools(resolved.tools) : undefined;
       const recordID = stableChatRecordID(qoderModel, normalizedMessages, toolsRaw, maxTokens);
 
       // Map pi's thinking level (options.reasoning) to Qoder's request fields.
