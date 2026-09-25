@@ -369,6 +369,42 @@ describe("streamQoder", () => {
     expect(events.map((event) => event.type)).toContain("thinking_delta");
   });
 
+  it("reports a degenerate turn instead of a silent stop", async () => {
+    // The gateway failed to parse the model's tool call and leaked its DSML
+    // markup into reasoning_content: the turn carries no text and no tool call,
+    // and finish_reason is still "stop". Reading that as a finished task ended
+    // the agent turn with nothing to show and nothing to retry.
+    const sse =
+      sseEnvelope(chunk({ reasoning_content: "Let me look.</invoke>\n</invoke>\n</invoke>" })) +
+      sseEnvelope(finishChunk("stop")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake", reasoning: "high" }));
+
+    const error = events.find((event) => event.type === "error") as { error: AssistantMessage };
+    expect(error, "expected an error event").toBeDefined();
+    expect(error.error.errorMessage).toMatch(/degenerate model output/);
+    expect(events.find((event) => event.type === "done")).toBeUndefined();
+  });
+
+  it("keeps a normal turn and strips the residue from its thinking", async () => {
+    const sse =
+      sseEnvelope(chunk({ reasoning_content: "thinking</invoke>\n</invoke>" })) +
+      sseEnvelope(chunk({ content: "the answer" })) +
+      sseEnvelope(finishChunk("stop")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake", reasoning: "high" }));
+
+    const done = events.find((event) => event.type === "done") as { message: AssistantMessage };
+    expect(done, "expected a done event").toBeDefined();
+    const thinking = done.message.content.find((block) => block.type === "thinking") as { thinking: string };
+    expect(thinking.thinking).toBe("thinking\n");
+    expect(done.message.content.find((block) => block.type === "text")).toMatchObject({ text: "the answer" });
+  });
+
   it("assembles parallel tool calls by their stream indexes", async () => {
     const sse =
       sseEnvelope(
