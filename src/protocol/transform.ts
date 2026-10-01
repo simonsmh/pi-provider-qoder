@@ -80,7 +80,9 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
   // with tool_calls".
   const droppedToolCallIds = new Set<string>();
 
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
     // Skip error or aborted messages
     if (
       msg.role === "assistant" &&
@@ -95,12 +97,6 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
           }
         }
       }
-      continue;
-    }
-
-    // Drop the result too, otherwise it refers to a tool_calls entry that is
-    // no longer in the request.
-    if (msg.role === "toolResult" && droppedToolCallIds.has((msg as ToolResultMessage).toolCallId)) {
       continue;
     }
 
@@ -185,39 +181,54 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
       }
       normalizedMessages.push(mapped);
     } else if (msg.role === "toolResult") {
-      const tr = msg as ToolResultMessage;
-      normalizedMessages.push({
-        role: "tool",
-        tool_call_id: tr.toolCallId,
-        content: getContentText(tr),
-      });
-
-      // A tool result may carry images — pi's `read` tool returns a text note
-      // plus an `image` block for png/jpg/gif/webp/bmp, and screenshot tools do
-      // the same. getContentText() maps every non-text block to "", so those
-      // images were dropped silently: the TUI rendered the picture while the
-      // model received only "Read image file [image/png]" and reported that it
-      // could not see images.
+      // Consume the whole run of consecutive tool results before emitting the
+      // images they returned. A `tool` message can only carry text, so tool
+      // images have to ride on a following `user` message; emitting one per
+      // result would interrupt the tool replies, and upstreams reject an
+      // assistant `tool_calls` turn whose replies are split ("insufficient tool
+      // messages following tool_calls message"). Instead emit every `tool`
+      // reply first, collect the images, and append a single `user` message
+      // after the run — the shape pi-ai's OpenAI provider uses.
       //
-      // The OpenAI-shaped `tool` role has nowhere to put them — its content is
-      // a plain string — so they follow as a separate user message, the same
-      // shape the user branch above already builds. The leading label keeps the
-      // model from reading a bare image as something the human just sent.
-      const images = getContentImages(tr);
-      if (images.length > 0) {
+      // pi's `read` tool returns a text note plus an `image` block for
+      // png/jpg/gif/webp/bmp, and screenshot tools do the same. getContentText()
+      // maps every non-text block to "", so before this the images were dropped
+      // silently: the TUI rendered the picture while the model received only
+      // "Read image file [image/png]" and reported that it could not see
+      // images. The leading label keeps the model from reading a bare image as
+      // something the human just sent.
+      const imageBlocks: QoderImagePart[] = [];
+      let j = i;
+      for (; j < messages.length; j++) {
+        const trMsg = messages[j];
+        if (trMsg.role !== "toolResult") break;
+        const tr = trMsg as ToolResultMessage;
+        // Drop results of an assistant turn that was skipped above, otherwise
+        // they refer to a tool_calls entry no longer in the request.
+        if (droppedToolCallIds.has(tr.toolCallId)) continue;
+        normalizedMessages.push({
+          role: "tool",
+          tool_call_id: tr.toolCallId,
+          content: getContentText(tr),
+        });
+        for (const img of getContentImages(tr)) {
+          imageBlocks.push({
+            type: "image_url",
+            image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+          });
+        }
+      }
+      i = j - 1;
+
+      if (imageBlocks.length > 0) {
         normalizedMessages.push({
           role: "user",
           content: [
             {
               type: "text",
-              text: `[${images.length} image${images.length === 1 ? "" : "s"} returned by the previous tool call]`,
+              text: `[${imageBlocks.length} image${imageBlocks.length === 1 ? "" : "s"} returned by the previous tool call]`,
             },
-            ...images.map(
-              (img): QoderImagePart => ({
-                type: "image_url",
-                image_url: { url: `data:${img.mimeType};base64,${img.data}` },
-              }),
-            ),
+            ...imageBlocks,
           ],
         });
       }
