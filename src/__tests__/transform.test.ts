@@ -227,37 +227,24 @@ describe("transformMessagesForQoder", () => {
     expect(JSON.stringify(result)).not.toContain("<thinking>");
   });
 
-  it("handles toolResult messages", () => {
-    const msgs = [
-      {
-        role: "toolResult",
-        toolCallId: "call_1",
-        content: "file content here",
-      },
-    ] as unknown as Message[];
-    const result = transformMessagesForQoder(msgs);
-    expect(result[0]).toEqual({
-      role: "tool",
-      tool_call_id: "call_1",
-      content: "file content here",
-    });
-  });
-
-  it("forwards images returned by a tool call", () => {
-    // pi's `read` tool returns a text note plus an image block for a png. The
-    // `tool` role is a plain string in the OpenAI shape, so the image has to
-    // follow as a user message; before this it was dropped and the model saw
-    // only the note, then reported that it could not see images.
+  it("forwards a tool result's images after the tool message", () => {
+    // pi's `read` tool returns a text note plus an `image` block for a png. The
+    // `tool` role can only carry text, so the images follow as a `user` message;
+    // before this they were dropped and the model saw only the note, then
+    // reported that it could not see images. Every image block must be
+    // forwarded, not just the first.
     const msgs = [
       {
         role: "toolResult",
         toolCallId: "call_1",
         content: [
           { type: "text", text: "Read image file [image/png]" },
-          { type: "image", data: "abc123", mimeType: "image/png" },
+          { type: "image", data: "AAA", mimeType: "image/png" },
+          { type: "image", data: "BBB", mimeType: "image/jpeg" },
         ],
       },
     ] as unknown as Message[];
+
     const result = transformMessagesForQoder(msgs);
 
     expect(result).toHaveLength(2);
@@ -266,49 +253,108 @@ describe("transformMessagesForQoder", () => {
       tool_call_id: "call_1",
       content: "Read image file [image/png]",
     });
-    expect(result[1].role).toBe("user");
     const parts = result[1].content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
-    expect(parts[0]).toEqual({
-      type: "text",
-      text: "[1 image returned by the previous tool call]",
-    });
-    expect(parts[1]).toEqual({
-      type: "image_url",
-      image_url: { url: "data:image/png;base64,abc123" },
-    });
+    expect(parts[0]).toEqual({ type: "text", text: "[2 images returned by the previous tool call]" });
+    expect(parts.slice(1).map((p) => p.image_url?.url)).toEqual([
+      "data:image/png;base64,AAA",
+      "data:image/jpeg;base64,BBB",
+    ]);
   });
 
-  it("forwards several images from one tool call", () => {
+  it("emits one tool message for a tool result without images", () => {
+    // The common case by far; it must stay a single `tool` message even after
+    // the image-forwarding path was added.
     const msgs = [
       {
         role: "toolResult",
         toolCallId: "call_1",
+        content: [{ type: "text", text: "file content here" }],
+      },
+    ] as unknown as Message[];
+
+    expect(transformMessagesForQoder(msgs)).toEqual([
+      { role: "tool", tool_call_id: "call_1", content: "file content here" },
+    ]);
+  });
+
+  it("keeps parallel tool replies contiguous when they carry images", () => {
+    // Regression: emitting the image `user` message right after each tool
+    // result split the run of replies to one assistant `tool_calls` turn, and
+    // the upstream rejected it with 400 "insufficient tool messages following
+    // tool_calls message". The images must trail the whole run instead.
+    const msgs = [
+      {
+        role: "assistant",
         content: [
-          { type: "text", text: "two shots" },
-          { type: "image", data: "one", mimeType: "image/png" },
-          { type: "image", data: "two", mimeType: "image/jpeg" },
+          { type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.png" } },
+          { type: "toolCall", id: "call_b", name: "read", arguments: { path: "b.png" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_a",
+        content: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "AAA", mimeType: "image/png" },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_b",
+        content: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "BBB", mimeType: "image/png" },
         ],
       },
     ] as unknown as Message[];
+
     const result = transformMessagesForQoder(msgs);
-    const parts = result[1].content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
-    expect(parts[0].text).toBe("[2 images returned by the previous tool call]");
-    expect(parts[1].image_url?.url).toBe("data:image/png;base64,one");
-    expect(parts[2].image_url?.url).toBe("data:image/jpeg;base64,two");
+
+    // Both tool replies stay adjacent; their images trail as one message.
+    expect(result.map((m) => m.role)).toEqual(["assistant", "tool", "tool", "user"]);
+    const parts = result[3].content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+    expect(parts[0]).toEqual({ type: "text", text: "[2 images returned by the previous tool call]" });
+    expect(parts.slice(1).map((p) => p.image_url?.url)).toEqual([
+      "data:image/png;base64,AAA",
+      "data:image/png;base64,BBB",
+    ]);
   });
 
-  it("adds no extra message when a tool result has no images", () => {
-    // The common case by far; it must stay a single `tool` message.
+  it("attributes each tool run's images to that run", () => {
     const msgs = [
       {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "a1", name: "read", arguments: {} }],
+      },
+      {
         role: "toolResult",
-        toolCallId: "call_1",
-        content: [{ type: "text", text: "plain text result" }],
+        toolCallId: "a1",
+        content: [
+          { type: "text", text: "first" },
+          { type: "image", data: "ONE", mimeType: "image/png" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "b1", name: "read", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "b1",
+        content: [
+          { type: "text", text: "second" },
+          { type: "image", data: "TWO", mimeType: "image/png" },
+        ],
       },
     ] as unknown as Message[];
+
     const result = transformMessagesForQoder(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe("tool");
+
+    expect(result.map((m) => m.role)).toEqual(["assistant", "tool", "user", "assistant", "tool", "user"]);
+    const first = result[2].content as Array<{ image_url?: { url: string } }>;
+    const second = result[5].content as Array<{ image_url?: { url: string } }>;
+    expect(first[1].image_url?.url).toBe("data:image/png;base64,ONE");
+    expect(second[1].image_url?.url).toBe("data:image/png;base64,TWO");
   });
 
   it("handles assistant message with string content", () => {
