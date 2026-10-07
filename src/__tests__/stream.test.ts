@@ -10,6 +10,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import * as PiAi from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { QoderUsage } from "../credits.js";
 import { resolveRequestContext, streamQoder } from "../protocol/stream.js";
 import { loadLiveFixture } from "./live-fixture.js";
 
@@ -283,6 +284,9 @@ describe("streamQoder", () => {
           id: "chatcmpl-abc123",
           model: "qmodel_latest",
           usage: {
+            credits: 0.000613272,
+            original_credits: 0.001226544,
+            billable: true,
             prompt_tokens: 42,
             completion_tokens: 7,
             total_tokens: 49,
@@ -310,6 +314,12 @@ describe("streamQoder", () => {
     expect(msg.usage.totalTokens).toBe(49);
     expect(msg.usage.cacheRead).toBe(5);
     expect(msg.usage.cacheWrite).toBe(10);
+    const creditUsage = msg.usage as QoderUsage;
+    expect(creditUsage.credits).toBe(0.000613272);
+    expect(creditUsage.original_credits).toBe(0.001226544);
+    expect(creditUsage.billable).toBe(true);
+    expect(creditUsage.charged_credits).toBe(0.000613272);
+    expect(msg.usage.cost.total).toBe(0);
   });
 
   it("emits a done event with reason=length when finish_reason is length", async () => {

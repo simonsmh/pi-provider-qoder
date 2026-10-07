@@ -18,6 +18,7 @@ import {
 import { resolveQoderIdentity } from "../auth/oauth.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
 import { buildAuthHeaders, getMachineId } from "../cosy.js";
+import { applyQoderCredits } from "../credits.js";
 import { getQoderChatURL, getQoderRegionConfig } from "../region.js";
 import { qoderEncodeBody } from "./encoding.js";
 import { isDegenerateDsmlTurn, stripDsmlResidue, stripThinkingTags, ThinkingTagParser } from "./thinking.js";
@@ -468,6 +469,7 @@ export function streamQoder(
             if (inner.id) output.responseId = inner.id as string;
             if (inner.model) output.responseModel = inner.model as string;
             if (inner.usage) {
+              applyQoderCredits(output.usage, inner.usage, model.provider === "qoder-cn" ? "qoder-cn" : "qoder");
               const u = inner.usage as {
                 prompt_tokens?: number;
                 completion_tokens?: number;

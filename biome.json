@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
   "files": {
-    "includes": ["src/**", "scripts/record-live-fixtures.ts", "test/**", "*.ts", "*.json"]
+    "includes": [
+      "src/**",
+      "scripts/record-live-fixtures.ts",
+      "scripts/demo-credit-footer.ts",
+      "test/**",
+      "*.ts",
+      "*.json"
+    ]
   },
   "formatter": {
     "enabled": true,
