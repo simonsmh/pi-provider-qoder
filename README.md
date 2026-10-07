@@ -59,3 +59,56 @@ Context uses the largest live catalog option (often 1M). Output is 128K.
 ## License
 
 MIT
+
+## Account credits (local prototype)
+
+Qoder quota is an **account-wide period balance**, including usage in other Qoder clients.
+It is not a per-response price or this pi session's credit spend. Credit values never
+enter pi's dollar-denominated `usage.cost` fields.
+
+A compact account-quota status is shown for the selected Qoder provider. For the full
+credit footer, opt in for the current pi session:
+
+```text
+/qoder-usage footer on
+/qoder-usage
+/qoder-usage footer off
+```
+
+Or start pi with `--qoder-credit-footer`. The custom footer replaces the misleading
+`$0.000 (sub)` with an explicitly labelled account-period credit row. Input/output,
+cache totals/hit rate, context, model/thinking level, directory, branch, session name,
+and other extension statuses remain visible. Existing nonzero dollar charges in mixed
+sessions are retained as `session $…` and are not relabelled as Qoder credits.
+Narrow terminals wrap quota and put the model on its own line.
+
+pi exposes one custom-footer slot. Enabling this option replaces another custom footer;
+leave it off when using a separate footer extension. If another extension takes the slot
+later, Qoder stops trying to reclaim it. Disabling restores pi's built-in footer only
+while Qoder still owns the slot. The public API does not expose the current auto-compaction
+setting, so this prototype does not add the built-in `(auto)` hint. Alternate hosts without
+pi's TUI footer API keep the status/command where supported.
+
+Quota refreshes asynchronously at session start, model selection, before a new agent run,
+and after an agent run. The in-memory cache lasts 30 seconds and coalesces simultaneous
+requests; `/qoder-usage` forces a refresh. A local timer marks expired snapshots `[stale]`
+without polling. Missing data shows `?`/unavailable, not zero; failed refreshes retain only
+the last snapshot for the same account. Personal and organization quota are separate,
+with the API's own units. The command also shows the allowance and expiry when provided.
+Credential lookup and quota requests are each bounded to 10 seconds.
+
+There is no dedicated host login/logout event. After changing authentication for an
+already-selected model, run `/qoder-usage`; otherwise the next supported lifecycle event
+rechecks identity. No account quota is written to disk.
+
+### Offline visual preview
+
+```bash
+npm ci
+npm run demo:credits
+```
+
+The demo runs the same footer renderer inside pi-tui with **sample data only**. It makes
+no account or model requests. Press `f` (fresh), `s` (stale), `u` (unavailable), `0` (zero
+quota), or `q` (quit). It shows both standard and 54-column layouts. This prototype has
+not been verified against a live account, and no package version or release is changed.

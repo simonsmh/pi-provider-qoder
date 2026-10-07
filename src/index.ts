@@ -8,6 +8,7 @@ import {
 } from "./auth/oauth.js";
 import { fetchQoderUsageForMode } from "./auth/usage.js";
 import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./catalog.js";
+import { registerQoderCreditDisplay } from "./credit-display.js";
 import { streamQoder } from "./protocol/stream.js";
 import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } from "./region.js";
 
@@ -128,4 +129,5 @@ export default async function (pi: ExtensionAPI) {
   });
 
   for (const mode of QODER_MODES) registerQoderProvider(pi, mode);
+  registerQoderCreditDisplay(pi);
 }
