@@ -20,6 +20,9 @@ const usage = {
   cacheRead: 28600,
   cacheWrite: 900,
   totalTokens: 43900,
+  credits: 2.125,
+  original_credits: 2.5,
+  billable: true,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 const ctx = {
@@ -27,13 +30,13 @@ const ctx = {
   model: { provider: "qoder", id: "Qwen3.8-Max", contextWindow: 1000000, reasoning: true },
   thinkingLevel: "high",
   sessionManager: {
-    getEntries: () => [{ type: "message", message: { role: "assistant", usage } }],
+    getEntries: () => [{ type: "message", message: { role: "assistant", provider: "qoder", usage } }],
     getSessionName: () => "Credit footer preview",
   },
   getContextUsage: () => ({ percent: 4.2, tokens: 42000, contextWindow: 1000000 }),
 } as unknown as ExtensionContext;
 const footer: ReadonlyFooterDataProvider = {
-  getGitBranch: () => "credit-prototype",
+  getGitBranch: () => "credit-footer",
   getAvailableProviderCount: () => 2,
   getExtensionStatuses: () =>
     new Map([
@@ -66,10 +69,10 @@ const preview = {
     return [
       "",
       theme.fg("accent", "QODER  /  ACCOUNT CREDITS"),
-      "LOCAL PROTOTYPE  •  SAMPLE DATA ONLY  •  NO LIVE ACCOUNT REQUESTS",
+      "SAMPLE DATA ONLY  •  NO LIVE ACCOUNT REQUESTS",
       "",
       "Same footer renderer used by /qoder-usage footer on",
-      "Credit counts cover the account period, including other Qoder clients.",
+      "Session deductions and account-period balances are shown separately.",
       "",
       theme.fg("dim", "STANDARD TERMINAL"),
       rule(wide),

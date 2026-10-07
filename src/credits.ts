@@ -1,8 +1,10 @@
 import type { Usage } from "@earendil-works/pi-ai";
 
+export type QoderProvider = "qoder" | "qoder-cn";
+
 /** Request-level fields supplied by Qoder, preserved in serialized assistant usage. */
 export interface QoderUsage extends Usage {
-  qoder_provider?: "qoder" | "qoder-cn";
+  qoder_provider?: QoderProvider;
   credits?: number;
   original_credits?: number;
   billable?: boolean;
@@ -26,11 +28,7 @@ export function chargedCredits(usage: QoderUsage): number | undefined {
 }
 
 /** Usage chunks are snapshots of one request; replace fields instead of summing them. */
-export function applyQoderCredits(
-  usage: QoderUsage,
-  raw: Record<string, unknown>,
-  provider?: "qoder" | "qoder-cn",
-): void {
+export function applyQoderCredits(usage: QoderUsage, raw: Record<string, unknown>, provider?: QoderProvider): void {
   if (provider) usage.qoder_provider = provider;
   if ("credits" in raw) usage.credits = creditNumber(raw.credits);
   if ("original_credits" in raw) usage.original_credits = creditNumber(raw.original_credits);

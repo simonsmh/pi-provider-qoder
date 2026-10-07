@@ -1,0 +1,69 @@
+{
+  "recordedAt": "2026-10-07",
+  "description": "Sanitized billing fields from live responses; no credentials or account identifiers.",
+  "requests": [
+    {
+      "name": "global-lite",
+      "provider": "qoder",
+      "usage": {
+        "billable": false,
+        "credits": 0.005221428571428571,
+        "original_credits": 0.005221428571428571
+      }
+    },
+    {
+      "name": "global-qwen-flash",
+      "provider": "qoder",
+      "usage": {
+        "billable": false,
+        "credits": 0.00084,
+        "original_credits": 0.00084
+      }
+    },
+    {
+      "name": "global-deepseek-flash",
+      "provider": "qoder",
+      "usage": {
+        "billable": true,
+        "credits": 0.0009810014285714286,
+        "original_credits": 0.0009810014285714286
+      }
+    },
+    {
+      "name": "global-kimi-small",
+      "provider": "qoder",
+      "usage": {
+        "billable": true,
+        "credits": 0.09700485,
+        "original_credits": 0.09700485
+      }
+    },
+    {
+      "name": "global-kimi-threshold-1",
+      "provider": "qoder",
+      "usage": {
+        "billable": true,
+        "credits": 0.9294464699999999,
+        "original_credits": 0.9294464699999999
+      }
+    },
+    {
+      "name": "global-kimi-threshold-2",
+      "provider": "qoder",
+      "usage": {
+        "billable": true,
+        "credits": 0.10240511999999999,
+        "original_credits": 0.10240511999999999
+      }
+    },
+    {
+      "name": "cn-qwen-flash",
+      "provider": "qoder-cn",
+      "usage": {
+        "billable": true,
+        "credits": 0.0006132719999999999,
+        "original_credits": 0.0006132719999999999
+      }
+    }
+  ]
+}

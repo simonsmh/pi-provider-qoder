@@ -1,9 +1,8 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ReadonlyFooterDataProvider, Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { chargedCredits, type QoderUsage } from "./credits.js";
 import type { QuotaBucket, QuotaState } from "./quota.js";
+import { collectSessionUsage, type SessionUsageTotals } from "./session-usage.js";
 
 export function qoderMode(provider: string | undefined) {
   return provider === "qoder" ? "global" : provider === "qoder-cn" ? "cn" : undefined;
@@ -89,34 +88,14 @@ function displayPath(cwd: string): string {
 
 export const QODER_STATUS_KEY = "qoder-quota";
 
-/** Whole-session totals rebuilt from persisted request-level usage, including auxiliary calls. */
+/** Shared text for the status, command and custom footer. */
 export function sessionCreditSummary(ctx: ExtensionContext): string[] {
-  const credits = new Map<string, { charged: number; known: number; unknown: number; free: number }>();
-  const add = (usage: Usage, provider?: string) => {
-    const creditUsage = usage as QoderUsage;
-    const creditProvider = provider ?? creditUsage.qoder_provider;
-    if (creditProvider && qoderMode(creditProvider)) {
-      const total = credits.get(creditProvider) ?? { charged: 0, known: 0, unknown: 0, free: 0 };
-      const charged = chargedCredits(creditUsage);
-      if (charged === undefined) total.unknown++;
-      else {
-        total.charged += charged;
-        total.known++;
-        if (creditUsage.billable === false) total.free++;
-      }
-      credits.set(creditProvider, total);
-    }
-  };
-  for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type === "usage") add(entry.usage);
-    else if (entry.type === "message" && entry.message.role === "assistant")
-      add(entry.message.usage, entry.message.provider);
-    else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage)
-      add(entry.message.usage);
-    else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) add(entry.usage);
-  }
+  return creditSummary(collectSessionUsage(ctx.sessionManager.getEntries()));
+}
+
+function creditSummary(totals: SessionUsageTotals): string[] {
   const lines: string[] = [];
-  for (const [provider, total] of credits) {
+  for (const [provider, total] of totals.credits) {
     const name = provider === "qoder-cn" ? "Qoder CN" : "Qoder";
     const amount = total.known ? formatCredits(total.charged) : "?";
     const notes = [
@@ -138,27 +117,8 @@ export function renderCreditFooter(
   width: number,
 ): string[] {
   if (width < 1) return [];
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-  let cacheHitRate: number | undefined;
-  const add = (usage: Usage) => {
-    totals.input += usage.input;
-    totals.output += usage.output;
-    totals.cacheRead += usage.cacheRead;
-    totals.cacheWrite += usage.cacheWrite;
-    totals.cost += usage.cost.total;
-  };
-  // Same whole-session accounting as pi's built-in footer, including summary/tool usage.
-  for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type === "usage") add(entry.usage);
-    else if (entry.type === "message" && entry.message.role === "assistant") {
-      add(entry.message.usage);
-      const usage = entry.message.usage;
-      const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
-      cacheHitRate = prompt > 0 ? (usage.cacheRead / prompt) * 100 : undefined;
-    } else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
-      add(entry.message.usage);
-    } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) add(entry.usage);
-  }
+  const totals = collectSessionUsage(ctx.sessionManager.getEntries());
+  const cacheHitRate = totals.cacheHitRate;
   const branch = footerData.getGitBranch();
   const session = ctx.sessionManager.getSessionName();
   const path = `${displayPath(ctx.cwd)}${branch ? ` (${branch})` : ""}${session ? ` • ${session}` : ""}`;
@@ -190,7 +150,7 @@ export function renderCreditFooter(
     lines.push(truncateToWidth(theme.fg("dim", singleLine(model)), width));
   }
   const color = state?.status === "stale" || state?.status === "unavailable" ? "warning" : "accent";
-  for (const line of sessionCreditSummary(ctx)) {
+  for (const line of creditSummary(totals)) {
     lines.push(...wrapTextWithAnsi(theme.fg(line.includes("unknown") ? "warning" : "accent", line), width));
   }
   for (const line of quotaSummary(state, ctx.model?.provider)) {

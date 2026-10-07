@@ -56,10 +56,6 @@ Context uses the largest live catalog option (often 1M). Output is 128K.
 | Usage | `https://openapi.qoder.sh/api/v2/quota/usage` | `https://openapi.qoder.com.cn/api/v2/quota/usage` |
 | Chat gateway | `https://api3.qoder.sh/` | `https://gateway.qoder.com.cn/` |
 
-## License
-
-MIT
-
 ## Request and account Credits
 
 The footer shows **actual session deductions in Credits**, accumulated from Qoder's
@@ -107,7 +103,7 @@ pi exposes one custom-footer slot. Enabling this option replaces another custom 
 leave it off when using a separate footer extension. If another extension takes the slot
 later, Qoder stops trying to reclaim it. Disabling restores pi's built-in footer only
 while Qoder still owns the slot. The public API does not expose the current auto-compaction
-setting, so this prototype does not add the built-in `(auto)` hint. Alternate hosts without
+setting, so the custom footer does not add the built-in `(auto)` hint. Alternate hosts without
 pi's TUI footer API keep the status/command where supported.
 
 Quota refreshes asynchronously at session start, model selection, before a new agent run,
@@ -134,3 +130,11 @@ The demo runs the same footer renderer inside pi-tui with **sample data only**. 
 no account or model requests. Press `f` (fresh), `s` (stale), `u` (unavailable), `0` (zero
 quota), or `q` (quit). It shows both standard and 54-column layouts. Global and CN
 quota queries and request-level billing fields have been verified with live calls.
+
+Sanitized billing samples in `src/__fixtures__/billing/usage.json` cover free Global
+calls, paid Global/CN calls, and two Kimi-K3 calls totaling 1.03185159 Credits.
+Session accounting regression tests use these samples without making live requests.
+
+## License
+
+MIT
