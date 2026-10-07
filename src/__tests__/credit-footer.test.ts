@@ -45,6 +45,57 @@ const usage = {
 };
 
 describe("credit footer", () => {
+  it("accumulates actual deductions separately for Global and CN and exposes incomplete history", () => {
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "qoder",
+          usage: { ...usage, credits: 0.005221428571428571, billable: false },
+        },
+      },
+      {
+        type: "message",
+        message: { role: "assistant", provider: "qoder-cn", usage: { ...usage, credits: 0.000613272, billable: true } },
+      },
+      {
+        type: "message",
+        message: { role: "assistant", provider: "qoder-cn", usage: { ...usage, credits: 0.001, billable: true } },
+      },
+      { type: "message", message: { role: "assistant", provider: "qoder-cn", usage } },
+      {
+        type: "message",
+        message: { role: "assistant", provider: "another", usage: { ...usage, credits: 100, billable: true } },
+      },
+    ];
+    const restored = JSON.parse(JSON.stringify(entries));
+    const output = renderCreditFooter(context(restored), footer, theme, state, 150).join("\n");
+    expect(output).toContain("Qoder session: 0 Credits (1 non-billable)");
+    expect(output).toContain("Qoder CN session: 0.00161327 Credits (1 unknown)");
+    expect(output).not.toContain("100 Credits");
+  });
+  it("shows add-on balance when the personal plan has no allowance", () => {
+    const output = quotaSummary({
+      status: "fresh",
+      snapshot: {
+        userQuota: { total: 0, used: 0, remaining: 0, unit: "credits" },
+        addOnQuota: { total: 300, used: 0, remaining: 300, unit: "credits" },
+      },
+    }).join("\n");
+    expect(output).toContain("Qoder add-on: 0 used · 300 left (credits)");
+  });
+  it("includes attributed standalone, summary and tool credits in the restored session total", () => {
+    const credited = { ...usage, qoder_provider: "qoder-cn", credits: 0.5, billable: true };
+    const entries = [
+      { type: "usage", usage: credited },
+      { type: "message", message: { role: "toolResult", usage: credited } },
+      { type: "compaction", usage: credited },
+      { type: "branch_summary", usage: credited },
+    ];
+    const output = renderCreditFooter(context(entries), footer, theme, state, 150).join("\n");
+    expect(output).toContain("Qoder CN session: 2 Credits");
+  });
   it("labels quota as account period, never as money or session spend", () => {
     const output = renderCreditFooter(context(), footer, theme, state, 150).join("\n");
     expect(output).toContain("Qoder account period: 127.5 used · 872.5 left (credits)");

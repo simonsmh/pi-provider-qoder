@@ -10,6 +10,7 @@ export interface QoderQuotaBucket {
 
 export interface QoderQuotaSnapshot {
   userQuota?: QoderQuotaBucket;
+  addOnQuota?: QoderQuotaBucket;
   orgResourcePackage?: QoderQuotaBucket;
   /** Account-period expiration, in Unix milliseconds as supplied by Qoder. */
   expiresAt?: number;
@@ -41,10 +42,10 @@ function quotaNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-function normalizeBucket(value: unknown): QoderQuotaBucket | undefined {
+function normalizeBucket(value: unknown, totalKey: "total" | "cap" = "total"): QoderQuotaBucket | undefined {
   const raw = asRecord(value);
   if (!raw) return undefined;
-  const total = quotaNumber(raw.total);
+  const total = quotaNumber(raw[totalKey]);
   const used = quotaNumber(raw.used);
   const remaining = quotaNumber(raw.remaining);
   if (total === undefined && used === undefined && remaining === undefined) return undefined;
@@ -57,13 +58,15 @@ export function normalizeQoderQuotaSnapshot(value: unknown): QoderQuotaSnapshot 
   const raw = asRecord(value);
   if (!raw) return undefined;
   const userQuota = normalizeBucket(raw.userQuota);
-  const orgResourcePackage = normalizeBucket(raw.orgResourcePackage);
-  if (!userQuota && !orgResourcePackage) return undefined;
+  const addOnQuota = normalizeBucket(raw.addOnQuota);
+  const orgRaw = asRecord(raw.orgResourcePackage);
+  const orgResourcePackage = normalizeBucket(orgRaw, orgRaw && "cap" in orgRaw ? "cap" : "total");
+  if (!userQuota && !addOnQuota && !orgResourcePackage) return undefined;
   const expiration = quotaNumber(raw.expiresAt);
   // Qoder's existing provider contract uses Unix milliseconds. Do not guess a
   // different unit or let an out-of-range date throw during display formatting.
   const expiresAt = expiration !== undefined && expiration <= 8.64e15 ? expiration : undefined;
-  return { userQuota, orgResourcePackage, expiresAt };
+  return { userQuota, ...(addOnQuota ? { addOnQuota } : {}), orgResourcePackage, expiresAt };
 }
 
 export async function fetchQoderUsageForMode(
@@ -95,6 +98,7 @@ export async function fetchQoderUsageForMode(
 
   for (const [id, label, bucket] of [
     ["user-quota", "User Quota", snapshot?.userQuota],
+    ["add-on-quota", "Add-on Credits", snapshot?.addOnQuota],
     ["org-resource-package", "Org Resource Package", snapshot?.orgResourcePackage],
   ] as const) {
     if (!bucket) continue;
@@ -113,9 +117,14 @@ export async function fetchQoderUsageForMode(
     personal?.remaining === undefined
       ? ""
       : `${personal.remaining.toFixed(2)}${personal.unit ? ` ${personal.unit}` : ""} remaining`;
+  const addOn = snapshot?.addOnQuota;
+  const addOnText =
+    addOn?.remaining === undefined
+      ? ""
+      : `Add-on: ${addOn.remaining.toFixed(2)}${addOn.unit ? ` ${addOn.unit}` : ""} remaining`;
 
   return {
-    summary: remainingText,
+    summary: [remainingText, addOnText].filter(Boolean).join(" · "),
     subscriptionTitle: region.usageTitle,
     resetAt,
     manageUrl: region.manageUrl,

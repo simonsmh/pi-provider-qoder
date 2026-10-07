@@ -1,8 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { QODER_STATUS_KEY, qoderMode, quotaDetails, quotaSummary, renderCreditFooter } from "./credit-footer.js";
+import {
+  QODER_STATUS_KEY,
+  qoderMode,
+  quotaDetails,
+  quotaSummary,
+  renderCreditFooter,
+  sessionCreditSummary,
+} from "./credit-footer.js";
 import { QoderQuotaService, type QuotaState } from "./quota.js";
 
-/** Separate from model usage/cost: only account quota GETs at UI lifecycle boundaries. */
+/** Account quota GETs at UI lifecycle boundaries; request Credits live in assistant usage. */
 export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new QoderQuotaService()): void {
   // Older/alternate hosts can still register the provider without this optional UI.
   if (typeof pi.registerCommand !== "function") return;
@@ -70,7 +77,9 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
   function publish(ctx: ExtensionContext) {
     if (ctx.hasUI) {
       const status =
-        qoderMode(ctx.model?.provider) && !owned ? quotaSummary(quota, ctx.model?.provider).join(" · ") : undefined;
+        qoderMode(ctx.model?.provider) && !owned
+          ? [...sessionCreditSummary(ctx), ...quotaSummary(quota, ctx.model?.provider)].join(" · ")
+          : undefined;
       ctx.ui.setStatus(QODER_STATUS_KEY, status);
     }
     requestRender?.();
@@ -137,7 +146,7 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
     void refresh(ctx);
   });
   pi.on("agent_end", (_event, ctx) => {
-    void refresh(ctx);
+    void refresh(ctx, true);
   });
   pi.on("session_shutdown", (_event, ctx) => {
     ++refreshId;
@@ -182,7 +191,7 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
       await refresh(ctx, true);
       if (refreshId !== nextRefresh) return;
       ctx.ui.notify(
-        quotaDetails(quota, ctx.model?.provider ?? "qoder"),
+        [...sessionCreditSummary(ctx), quotaDetails(quota, ctx.model?.provider ?? "qoder")].join("\n"),
         quota?.status === "fresh" ? "info" : "warning",
       );
     },

@@ -208,16 +208,50 @@ describe("Qoder credit display registration and safe modes", () => {
 });
 
 describe("Qoder credit display quota lifecycle", () => {
-  it("reads cached quota on each lifecycle boundary without forcing a fetch", async () => {
+  it("shows persisted request deductions in both the default status and the usage command", async () => {
+    const app = host();
+    const ctx = app.makeContext("qoder-cn");
+    ctx.sessionManager = {
+      ...ctx.sessionManager,
+      getEntries: () =>
+        [
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              provider: "qoder-cn",
+              usage: {
+                input: 17,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 18,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                credits: 0.000613272,
+                billable: true,
+              },
+            },
+          },
+        ] as unknown as ReturnType<ExtensionContext["sessionManager"]["getEntries"]>,
+    };
+    await app.emit("session_start", ctx);
+    expect(app.statuses.get(QODER_STATUS_KEY)).toContain("Qoder CN session: 0.00061327 Credits");
+    await app.command("", ctx);
+    expect(app.ui.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Qoder CN session: 0.00061327 Credits"),
+      "info",
+    );
+  });
+  it("reuses quota at lifecycle boundaries and forces a new snapshot after an agent run", async () => {
     const mock = fakeService();
     const app = host(mock.service);
     for (const event of ["session_start", "model_select", "before_agent_start", "agent_end"]) await app.emit(event);
     expect(mock.read).toHaveBeenCalledTimes(4);
-    for (const call of mock.read.mock.calls) {
+    for (const [index, call] of mock.read.mock.calls.entries()) {
       expect(call).toEqual([
         "global",
         { access: "test-access", refresh: "", expires: Number.POSITIVE_INFINITY },
-        false,
+        index === 3,
       ]);
     }
     expect(app.getApiKeyForProvider).toHaveBeenCalledWith("qoder");
@@ -228,22 +262,27 @@ describe("Qoder credit display quota lifecycle", () => {
 
   it("integrates with the real service TTL and manual refresh bypass", async () => {
     let now = 100;
-    const fetchUsage = vi.fn().mockResolvedValue({ raw: fresh().snapshot });
+    const fetchUsage = vi
+      .fn()
+      .mockResolvedValueOnce({ raw: fresh().snapshot })
+      .mockResolvedValue({ raw: fresh(25, 75).snapshot });
     const service = new QoderQuotaService({ fetchUsage, now: () => now, ttlMs: 30_000 });
     const app = host(service);
     await app.emit("session_start");
     await app.emit("model_select");
     await app.emit("before_agent_start");
-    await app.emit("agent_end");
     expect(fetchUsage).toHaveBeenCalledOnce();
+    await app.emit("agent_end");
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+    expect(app.statuses.get(QODER_STATUS_KEY)).toContain("25 used · 75 left");
     await app.command();
-    expect(fetchUsage).toHaveBeenCalledTimes(2);
-    now += 29_999;
-    await app.emit("agent_end");
-    expect(fetchUsage).toHaveBeenCalledTimes(2);
-    now += 1;
-    await app.emit("agent_end");
     expect(fetchUsage).toHaveBeenCalledTimes(3);
+    now += 29_999;
+    await app.emit("before_agent_start");
+    expect(fetchUsage).toHaveBeenCalledTimes(3);
+    now += 1;
+    await app.emit("before_agent_start");
+    expect(fetchUsage).toHaveBeenCalledTimes(4);
     await app.emit("session_shutdown");
     expect(service.peek("global")).toBeUndefined();
   });
@@ -414,7 +453,7 @@ describe("Qoder credit display local timeout and expiry timers", () => {
     await app.emit("session_start");
     now = 70;
     await vi.advanceTimersByTimeAsync(70);
-    await app.emit("agent_end");
+    await app.emit("before_agent_start");
     expect(fetchUsage).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(1);
     now = 101;

@@ -31,6 +31,17 @@ afterEach(() => {
 });
 
 describe("quota normalization", () => {
+  it("reads add-on-only balances and the documented organization cap", () => {
+    const snapshot = normalizeQoderQuotaSnapshot({
+      addOnQuota: { total: 300, used: 0, remaining: 300, unit: "credits" },
+      orgResourcePackage: { cap: 1500, used: 1, remaining: 1499, unit: "credits" },
+    });
+    expect(snapshot?.addOnQuota).toEqual({ total: 300, used: 0, remaining: 300, unit: "credits" });
+    expect(snapshot?.orgResourcePackage?.total).toBe(1500);
+    expect(
+      normalizeQoderQuotaSnapshot({ addOnQuota: { remaining: 100, unit: "credits" } })?.addOnQuota?.remaining,
+    ).toBe(100);
+  });
   it("preserves separate account buckets without aggregating different units", () => {
     expect(normalizeQoderQuotaSnapshot(completeRaw)).toEqual({
       userQuota: { total: 100, used: 25, remaining: 75, unit: "credits" },
@@ -105,6 +116,27 @@ describe("quota normalization", () => {
 });
 
 describe("provider usage compatibility", () => {
+  it("includes the live Global and CN add-on balances in buckets and the provider summary", async () => {
+    for (const [mode, total] of [
+      ["global", 300],
+      ["cn", 100],
+    ] as const) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              userQuota: { total: 0, used: 0, remaining: 0, unit: "credits" },
+              addOnQuota: { total, used: 0, remaining: total, unit: "credits" },
+            }),
+          ),
+        ),
+      );
+      const result = await fetchQoderUsageForMode(credentials, mode);
+      expect(result.usageBuckets?.find((bucket) => bucket.id === "add-on-quota")?.limitDisplay).toBe(total.toFixed(2));
+      expect(result.summary).toContain(`Add-on: ${total.toFixed(2)} credits remaining`);
+    }
+  });
   it("preserves the raw response and formatted provider usage with an optional signal", async () => {
     const raw = { ...completeRaw, providerExtra: { preserved: true } };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw)));
