@@ -65,3 +65,27 @@ export function collectSessionUsage(entries: readonly SessionEntry[]): SessionUs
   }
   return totals;
 }
+
+/** Session entries are append-only; every append updates the leaf, including usage entries. */
+export class SessionUsageCache {
+  private manager?: { getSessionId(): string; getLeafId(): string | null; getEntries(): SessionEntry[] };
+  private sessionId?: string;
+  private leafId?: string | null;
+  private totals?: SessionUsageTotals;
+
+  read(manager: {
+    getSessionId(): string;
+    getLeafId(): string | null;
+    getEntries(): SessionEntry[];
+  }): SessionUsageTotals {
+    const sessionId = manager.getSessionId();
+    const leafId = manager.getLeafId();
+    if (this.manager !== manager || this.sessionId !== sessionId || this.leafId !== leafId || !this.totals) {
+      this.totals = collectSessionUsage(manager.getEntries());
+      this.manager = manager;
+      this.sessionId = sessionId;
+      this.leafId = leafId;
+    }
+    return this.totals;
+  }
+}

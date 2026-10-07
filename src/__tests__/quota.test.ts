@@ -30,6 +30,40 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("forced refresh ordering", () => {
+  it("coalesces forced callers into a new request after the pending read", async () => {
+    const first = deferred<QoderProviderUsage>();
+    const fetchUsage = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(usage({ userQuota: { remaining: 74 } }));
+    const service = new QoderQuotaService({ fetchUsage });
+    const background = service.read("global", credentials);
+    const forced = service.read("global", credentials, true);
+    expect(service.read("global", credentials, true)).toBe(forced);
+    first.resolve(usage());
+    expect((await background).snapshot?.userQuota?.remaining).toBe(75);
+    expect((await forced).snapshot?.userQuota?.remaining).toBe(74);
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not resurrect a replaced account from a queued refresh", async () => {
+    const first = deferred<QoderProviderUsage>();
+    const fetchUsage = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(usage({ userQuota: { remaining: 99 } }));
+    const service = new QoderQuotaService({ fetchUsage });
+    const background = service.read("global", credentials);
+    await Promise.resolve();
+    const forced = service.read("global", credentials, true);
+    await service.read("global", otherCredentials);
+    await Promise.all([background, forced]);
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+    expect(service.peek("global")?.snapshot?.userQuota?.remaining).toBe(99);
+  });
+});
+
 describe("quota normalization", () => {
   it("reads add-on-only balances and the documented organization cap", () => {
     const snapshot = normalizeQoderQuotaSnapshot({
@@ -212,7 +246,7 @@ describe("QoderQuotaService", () => {
     expect(service.peek("global")).toBeUndefined();
     const first = service.read("global", credentials);
     expect(service.peek("global")?.status).toBe("loading");
-    const second = service.read("global", { ...credentials }, true);
+    const second = service.read("global", { ...credentials });
     expect(first).toBe(second);
     pending.resolve(usage());
     expect(await first).toMatchObject({ status: "fresh", updatedAt: 123, snapshot: { userQuota: { remaining: 75 } } });

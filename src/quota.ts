@@ -33,6 +33,7 @@ interface CacheEntry {
   checkedAt?: number;
   pending?: Promise<QuotaState>;
   controller?: AbortController;
+  forced?: Promise<QuotaState>;
 }
 
 const UNAVAILABLE = "Qoder quota unavailable";
@@ -70,7 +71,23 @@ export class QoderQuotaService {
       entry.state = { status: "unavailable", error: UNAVAILABLE };
       return Promise.resolve(entry.state);
     }
-    if (entry.pending) return entry.pending;
+    if (entry.pending) {
+      if (!force) return entry.pending;
+      if (!entry.forced) {
+        const current = entry;
+        const selectedCredentials = { ...credentials };
+        entry.forced = entry.pending
+          .then(() => {
+            // Cleared or replaced accounts must never be revived by queued work.
+            if (this.entries.get(mode) !== current) return current.state;
+            return this.read(mode, selectedCredentials, true);
+          })
+          .finally(() => {
+            current.forced = undefined;
+          });
+      }
+      return entry.forced;
+    }
     if (!force && entry.checkedAt !== undefined && this.now() - entry.checkedAt < this.ttlMs) {
       return Promise.resolve(entry.state);
     }

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { applyQoderCredits, type QoderProvider, type QoderUsage } from "../credits.js";
-import { collectSessionUsage } from "../session-usage.js";
+import { collectSessionUsage, SessionUsageCache } from "../session-usage.js";
 
 const fixtures = JSON.parse(readFileSync(new URL("../__fixtures__/billing/usage.json", import.meta.url), "utf8")) as {
   requests: {
@@ -70,4 +70,28 @@ describe("session usage accounting", () => {
     expect(result.cacheHitRate).toBe(75);
     expect(result.cost).toBe(0.5);
   });
+});
+
+it("caches unchanged renders and invalidates on leaf, session or manager changes", () => {
+  const cache = new SessionUsageCache();
+  let reads = 0;
+  let leaf = "a";
+  let session = "first";
+  const manager = {
+    getSessionId: () => session,
+    getLeafId: () => leaf,
+    getEntries: () => {
+      reads++;
+      return entries([]);
+    },
+  };
+  const first = cache.read(manager);
+  expect(cache.read(manager)).toBe(first);
+  expect(reads).toBe(1);
+  leaf = "b";
+  expect(cache.read(manager)).not.toBe(first);
+  session = "second";
+  cache.read(manager);
+  cache.read({ ...manager });
+  expect(reads).toBe(4);
 });

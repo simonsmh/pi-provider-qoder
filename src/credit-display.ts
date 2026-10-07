@@ -8,6 +8,7 @@ import {
   sessionCreditSummary,
 } from "./credit-footer.js";
 import { QoderQuotaService, type QuotaState } from "./quota.js";
+import { SessionUsageCache } from "./session-usage.js";
 
 /** Account quota GETs at UI lifecycle boundaries; request Credits live in assistant usage. */
 export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new QoderQuotaService()): void {
@@ -18,6 +19,7 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
     default: false,
     description: "Opt in to the Qoder account-credit footer (replaces other custom footers)",
   });
+  const sessionUsage = new SessionUsageCache();
   let enabled = false;
   let initialized = false;
   let owned = false;
@@ -62,7 +64,17 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
       const unsubscribe = footerData.onBranchChange(requestRender);
       return {
         invalidate() {},
-        render: (width) => renderCreditFooter(latestContext ?? ctx, footerData, theme, quota, width),
+        render: (width) => {
+          const current = latestContext ?? ctx;
+          return renderCreditFooter(
+            current,
+            footerData,
+            theme,
+            quota,
+            width,
+            sessionUsage.read(current.sessionManager),
+          );
+        },
         dispose() {
           unsubscribe();
           requestRender = undefined;
@@ -78,7 +90,10 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
     if (ctx.hasUI) {
       const status =
         qoderMode(ctx.model?.provider) && !owned
-          ? [...sessionCreditSummary(ctx), ...quotaSummary(quota, ctx.model?.provider)].join(" · ")
+          ? [
+              ...sessionCreditSummary(ctx, sessionUsage.read(ctx.sessionManager)),
+              ...quotaSummary(quota, ctx.model?.provider),
+            ].join(" · ")
           : undefined;
       ctx.ui.setStatus(QODER_STATUS_KEY, status);
     }
@@ -191,7 +206,10 @@ export function registerQoderCreditDisplay(pi: ExtensionAPI, service = new Qoder
       await refresh(ctx, true);
       if (refreshId !== nextRefresh) return;
       ctx.ui.notify(
-        [...sessionCreditSummary(ctx), quotaDetails(quota, ctx.model?.provider ?? "qoder")].join("\n"),
+        [
+          ...sessionCreditSummary(ctx, sessionUsage.read(ctx.sessionManager)),
+          quotaDetails(quota, ctx.model?.provider ?? "qoder"),
+        ].join("\n"),
         quota?.status === "fresh" ? "info" : "warning",
       );
     },

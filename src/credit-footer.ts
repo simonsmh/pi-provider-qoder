@@ -89,8 +89,11 @@ function displayPath(cwd: string): string {
 export const QODER_STATUS_KEY = "qoder-quota";
 
 /** Shared text for the status, command and custom footer. */
-export function sessionCreditSummary(ctx: ExtensionContext): string[] {
-  return creditSummary(collectSessionUsage(ctx.sessionManager.getEntries()));
+export function sessionCreditSummary(
+  ctx: ExtensionContext,
+  totals = collectSessionUsage(ctx.sessionManager.getEntries()),
+): string[] {
+  return creditSummary(totals);
 }
 
 function creditSummary(totals: SessionUsageTotals): string[] {
@@ -115,9 +118,9 @@ export function renderCreditFooter(
   theme: Theme,
   state: QuotaState | undefined,
   width: number,
+  totals = collectSessionUsage(ctx.sessionManager.getEntries()),
 ): string[] {
   if (width < 1) return [];
-  const totals = collectSessionUsage(ctx.sessionManager.getEntries());
   const cacheHitRate = totals.cacheHitRate;
   const branch = footerData.getGitBranch();
   const session = ctx.sessionManager.getSessionName();

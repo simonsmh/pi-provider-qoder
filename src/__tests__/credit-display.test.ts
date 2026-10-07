@@ -104,7 +104,12 @@ function host(service = fakeService().service, footerOptIn = false) {
       cwd: "/test/project",
       model: { id: "test-model", provider, contextWindow: 128_000, reasoning: false },
       modelRegistry: { getApiKeyForProvider },
-      sessionManager: { getEntries: () => [], getSessionName: () => sessionName },
+      sessionManager: {
+        getSessionId: () => "test-session",
+        getLeafId: () => "test-leaf",
+        getEntries: () => [],
+        getSessionName: () => sessionName,
+      },
       getContextUsage: () => ({ percent: 10, contextWindow: 128_000 }),
       ...extra,
     }) as unknown as ExtensionContext;
