@@ -508,3 +508,93 @@ describe("transformMessagesForQoder", () => {
     }
   });
 });
+
+// ── tool call ID rewriting ────────────────────────────────────────────────
+
+describe("transformMessagesForQoder tool call ID rewriting", () => {
+  it("rewrites pi Responses-adapter IDs and keeps the tool result paired", () => {
+    // Regression: pi's OpenAI Responses adapter builds internal tool call IDs
+    // like `call_id|item_id`. Forwarded verbatim, Qoder rejects the request
+    // with 400 "tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'"
+    // and every later request in the session fails the same way.
+    const msgs = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_abc|fc_xyz", name: "bash", arguments: { command: "ls" } }],
+      },
+      { role: "toolResult", toolCallId: "call_abc|fc_xyz", content: "file1\nfile2" },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+
+    const asst = result[1] as { tool_calls?: Array<{ id: string }> };
+    const tool = result[2] as { role: string; tool_call_id: string };
+    const wireId = asst.tool_calls?.[0].id as string;
+    expect(wireId).toMatch(/^qtc_[0-9a-f]{60}$/);
+    expect(tool.tool_call_id).toBe(wireId);
+    expect(JSON.stringify(result)).not.toContain("call_abc|fc_xyz");
+  });
+
+  it("leaves already-valid IDs untouched", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_abc123", name: "bash", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_abc123", content: "ok" },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+    expect((result[0] as { tool_calls?: Array<{ id: string }> }).tool_calls?.[0].id).toBe("call_abc123");
+    expect((result[1] as { tool_call_id: string }).tool_call_id).toBe("call_abc123");
+  });
+
+  it("maps distinct IDs that share a call_id prefix to distinct wire IDs", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "call_A|fc_A", name: "read", arguments: {} },
+          { type: "toolCall", id: "call_A|fc_B", name: "read", arguments: {} },
+        ],
+      },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+    const ids = (result[0] as { tool_calls?: Array<{ id: string }> }).tool_calls?.map((t) => t.id);
+    expect(ids?.[0]).toMatch(/^qtc_[0-9a-f]{60}$/);
+    expect(ids?.[1]).toMatch(/^qtc_[0-9a-f]{60}$/);
+    expect(ids?.[0]).not.toBe(ids?.[1]);
+  });
+
+  it("produces the same wire IDs when the same history is transformed again", () => {
+    // Session history keeps raw internal IDs; the next request re-transforms
+    // them, and the wire IDs must match what was already sent or the upstream
+    // sees an unpaired tool result.
+    const msgs = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1|fc_1", name: "bash", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_1|fc_1", content: "ok" },
+    ] as unknown as Message[];
+    expect(transformMessagesForQoder(msgs)).toEqual(transformMessagesForQoder(msgs));
+  });
+
+  it("still drops an aborted turn whose IDs contain '|'", () => {
+    // The drop filter compares raw internal IDs and runs before mapping, so an
+    // aborted assistant turn must take its tool result down with it exactly as
+    // before, without the mapper ever seeing those IDs.
+    const msgs = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        stopReason: "aborted",
+        content: [{ type: "toolCall", id: "call_gone|fc_gone", name: "bash", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "call_gone|fc_gone", content: "output" },
+      { role: "user", content: "again" },
+    ] as unknown as Message[];
+    const result = transformMessagesForQoder(msgs);
+
+    expect(result.map((m) => (m as { role: string }).role)).toEqual(["user", "user"]);
+  });
+});

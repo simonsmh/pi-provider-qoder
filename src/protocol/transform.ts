@@ -9,6 +9,7 @@ import type {
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { stripDsmlResidue } from "./thinking.js";
+import { createQoderToolCallIdMapper } from "./tool-call-id.js";
 
 /** OpenAI-style tool definition sent to the Qoder API. */
 interface QoderTool {
@@ -73,6 +74,12 @@ export function transformTools(tools: Tool[]): QoderTool[] {
 
 export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
   const normalizedMessages: QoderMessage[] = [];
+
+  // Qoder rejects tool call IDs outside `^[a-zA-Z0-9_-]{1,64}$`; pi's OpenAI
+  // Responses adapter produces internal IDs containing `|`. Rewrite them for
+  // the wire only. droppedToolCallIds below intentionally keeps comparing raw
+  // internal IDs: the drop filter runs before mapping on both sides.
+  const mapToolCallId = createQoderToolCallIdMapper();
 
   // Dropping an assistant turn (below) also invalidates its tool calls: the
   // result that follows would refer to a tool_calls entry that is no longer in
@@ -150,7 +157,7 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
           } else if (block.type === "toolCall") {
             const tc = block as ToolCall;
             toolCalls.push({
-              id: tc.id,
+              id: mapToolCallId(tc.id),
               type: "function",
               function: {
                 name: tc.name,
@@ -208,7 +215,7 @@ export function transformMessagesForQoder(messages: Message[]): QoderMessage[] {
         if (droppedToolCallIds.has(tr.toolCallId)) continue;
         normalizedMessages.push({
           role: "tool",
-          tool_call_id: tr.toolCallId,
+          tool_call_id: mapToolCallId(tr.toolCallId),
           content: getContentText(tr),
         });
         for (const img of getContentImages(tr)) {
