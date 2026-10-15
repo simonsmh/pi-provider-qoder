@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import { buildAuthHeaders } from "./cosy.js";
+import { refreshGatewayCosyVersion } from "./cosy-version.js";
 import { getQoderBaseUrl, getQoderModelListURL, getQoderRegionConfig, type QoderMode } from "./region.js";
 
 export const ZERO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
@@ -701,5 +702,15 @@ export async function updateQoderModelsCache(
     };
 
     writeParsedModelCache(mode, cacheData);
+
+    // A successful catalog round-trip proves connectivity; use it to keep
+    // the dynamic COSY identity tracking the latest Qoder CLI release.
+    // Fire-and-forget (throttled to once a day, never throws): the fresh
+    // version applies to every request signed after this one. Skipped
+    // under vitest, where several suites replay fixture traffic through
+    // updateQoderModelsCache and must stay hermetic.
+    if (!process.env.VITEST) {
+      void refreshGatewayCosyVersion();
+    }
   } catch {}
 }
