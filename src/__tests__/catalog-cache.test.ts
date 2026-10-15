@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearQoderModelsMemCache, getCachedModelConfig, getCachedModels, updateQoderModelsCache } from "../catalog.js";
+import { clearCosyVersionMemCache } from "../cosy-version.js";
 import { loadLiveFixture, responseFromFixture } from "./live-fixture.js";
 
 function testHome(): string {
@@ -37,12 +38,58 @@ afterEach(() => {
 });
 
 describe("Qoder model cache", () => {
+  it("refreshes the COSY version before signing the catalog request", async () => {
+    const cosyCachePath = join(testHome(), ".pi", "agent", "qoder-cosy-version-cache.json");
+    rmSync(cosyCachePath, { force: true });
+    clearCosyVersionMemCache();
+
+    const calls: string[] = [];
+    let catalogHeaders: Record<string, string> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: { headers?: Record<string, string> }) => {
+        if (String(url).includes("repo.qoder.com")) {
+          calls.push("releases");
+          return new Response(JSON.stringify([{ tag_name: "1.1.99", draft: false, prerelease: false }]), {
+            status: 200,
+          });
+        }
+        calls.push("catalog");
+        catalogHeaders = init?.headers;
+        return new Response(JSON.stringify({ chat: [{ key: "lite", enable: true, display_name: "Lite" }] }), {
+          status: 200,
+        });
+      }),
+    );
+
+    try {
+      await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
+
+      // The catalog request must be signed with the version the refresh
+      // just fetched (1.1.99, ahead of the bundled fallback), not the
+      // stale identity; otherwise the gateway returns the reduced list.
+      expect(calls).toEqual(["releases", "catalog"]);
+      expect(catalogHeaders?.["Cosy-Version"]).toBe("1.1.99");
+      expect(getCachedModels("global").map((model) => model.id)).toEqual(["Lite"]);
+    } finally {
+      rmSync(cosyCachePath, { force: true });
+      clearCosyVersionMemCache();
+    }
+  });
+
   it.each([
     ["global", ["Lite", "GLM5.2"]],
     ["cn", ["Qwen3.7Plus"]],
   ] as const)("maps the %s recorded-format catalog to friendly picker ids", async (region, expectedIds) => {
     const interaction = loadLiveFixture(region).interactions.modelList;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromFixture(interaction)));
+    // URL-aware: updateQoderModelsCache first refreshes the COSY version
+    // from repo.qoder.com; that call must not consume the catalog fixture.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) =>
+        String(url).includes("repo.qoder.com") ? new Response("[]", { status: 200 }) : responseFromFixture(interaction),
+      ),
+    );
 
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", region);
 

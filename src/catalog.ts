@@ -629,6 +629,14 @@ export async function updateQoderModelsCache(
 ): Promise<void> {
   const modelListURL = getQoderModelListURL(mode);
   try {
+    // Refresh the dynamic COSY identity BEFORE signing this request: the
+    // gateway gates the catalog on the client's COSY version, so a catalog
+    // request signed with a stale identity returns the reduced list, which
+    // is then cached for its full TTL and registered for the whole session.
+    // The refresh is throttled to once a day and never throws; when it is
+    // not due it returns immediately.
+    await refreshGatewayCosyVersion();
+
     const headers = buildAuthHeaders(null, modelListURL, {
       userID,
       authToken,
@@ -702,15 +710,5 @@ export async function updateQoderModelsCache(
     };
 
     writeParsedModelCache(mode, cacheData);
-
-    // A successful catalog round-trip proves connectivity; use it to keep
-    // the dynamic COSY identity tracking the latest Qoder CLI release.
-    // Fire-and-forget (throttled to once a day, never throws): the fresh
-    // version applies to every request signed after this one. Skipped
-    // under vitest, where several suites replay fixture traffic through
-    // updateQoderModelsCache and must stay hermetic.
-    if (!process.env.VITEST) {
-      void refreshGatewayCosyVersion();
-    }
   } catch {}
 }
