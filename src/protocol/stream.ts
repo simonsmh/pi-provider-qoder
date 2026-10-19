@@ -24,13 +24,101 @@ import { qoderEncodeBody } from "./encoding.js";
 import { isDegenerateDsmlTurn, stripDsmlResidue, stripThinkingTags, ThinkingTagParser } from "./thinking.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
 
+interface ToolCallCandidates {
+  states: Set<ToolCallState>;
+  complete: Set<ToolCallState>;
+}
+
 interface ToolCallState {
-  arguments: string;
+  argumentChunks: string[];
+  argumentLength: number;
+  objectRoot?: boolean;
+  depth: number;
+  inString: boolean;
+  escaped: boolean;
+  complete: boolean;
+  parsedArguments?: ToolCall["arguments"];
   id: string;
   name: string;
-  emittedStart?: boolean;
-  emittedEnd?: boolean;
+  block?: ToolCall;
   contentIndex: number;
+  candidates: Set<ToolCallCandidates>;
+  unindexed: boolean;
+}
+
+const TOOL_ARGUMENT_STRUCTURE = /["\\{}[\]]/g;
+const NON_JSON_WHITESPACE = /[^ \t\r\n]/;
+
+function invalidToolArguments(state: ToolCallState): Error {
+  return new Error(`Invalid or incomplete tool-call JSON (characters=${state.argumentLength})`);
+}
+
+// Only locate a possible root-object boundary here. JSON.parse remains the
+// authority on grammar; scanning each new fragment avoids parsing prefixes.
+function appendToolArguments(state: ToolCallState, fragment: string): void {
+  state.argumentChunks.push(fragment);
+  state.argumentLength += fragment.length;
+  if (state.complete) {
+    if (NON_JSON_WHITESPACE.test(fragment)) throw invalidToolArguments(state);
+    return;
+  }
+  let start = 0;
+  if (state.objectRoot === undefined) {
+    start = fragment.search(NON_JSON_WHITESPACE);
+    if (start === -1) return;
+    state.objectRoot = fragment[start] === "{";
+  }
+  if (!state.objectRoot) return;
+  if (state.escaped) {
+    start = 1;
+    state.escaped = false;
+  }
+  TOOL_ARGUMENT_STRUCTURE.lastIndex = start;
+  while (true) {
+    const match = TOOL_ARGUMENT_STRUCTURE.exec(fragment);
+    if (!match) break;
+    const character = match[0];
+    if (state.inString) {
+      if (character === "\\") {
+        if (TOOL_ARGUMENT_STRUCTURE.lastIndex === fragment.length) state.escaped = true;
+        else TOOL_ARGUMENT_STRUCTURE.lastIndex++;
+      } else if (character === '"') {
+        state.inString = false;
+      }
+    } else if (character === '"') {
+      state.inString = true;
+    } else if (character === "{" || character === "[") {
+      state.depth++;
+    } else if (character === "}" || character === "]") {
+      state.depth--;
+      if (state.depth === 0) {
+        state.complete = true;
+        if (NON_JSON_WHITESPACE.test(fragment.slice(TOOL_ARGUMENT_STRUCTURE.lastIndex))) {
+          throw invalidToolArguments(state);
+        }
+        return;
+      }
+    }
+  }
+}
+
+function parseToolArguments(state: ToolCallState): ToolCall["arguments"] {
+  if (state.parsedArguments) return state.parsedArguments;
+  let args: unknown = {};
+  if (state.argumentLength > 0) {
+    try {
+      args = JSON.parse(state.argumentChunks.join(""));
+    } catch {
+      // Do not let the malformed-SSE SyntaxError handler swallow this failure,
+      // and never include the parser's message (which can expose arguments).
+      throw invalidToolArguments(state);
+    }
+  }
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error(`Non-object tool-call arguments (characters=${state.argumentLength})`);
+  }
+  state.parsedArguments = args as ToolCall["arguments"];
+  return state.parsedArguments;
 }
 
 function stableHash(prefix: string, ...inputs: string[]): string {
@@ -409,6 +497,35 @@ export function streamQoder(
       // this stays bounded instead of growing with the reply.
       let rawReasoningTail = "";
       const toolCallsState: ToolCallState[] = [];
+      const toolCallsById = new Map<string, ToolCallState>();
+      const toolCandidatesByIndex = new Map<number, ToolCallCandidates>();
+      const unscopedToolCandidates = new Set<ToolCallState>();
+      const toolStatesByBlock = new Map<ToolCall, ToolCallState>();
+      let lastToolState: ToolCallState | undefined;
+
+      const refreshToolIndexes = () => {
+        if (!lastToolState || output.content[lastToolState.contentIndex] === lastToolState.block) return;
+        // ThinkingTagParser.emitThinking() can splice only when creating its
+        // first thinking block. All other layout changes append. Check the
+        // last tool in O(1), then refresh the shifted suffix in one scan.
+        for (let index = 0; index < output.content.length; index++) {
+          const block = output.content[index];
+          if (block.type !== "toolCall") continue;
+          const state = toolStatesByBlock.get(block);
+          if (state) state.contentIndex = index;
+        }
+      };
+
+      const retireCompleteCandidates = (candidates: ToolCallCandidates) => {
+        for (const state of candidates.complete) {
+          // Structural closure alone is not sufficient evidence of a boundary.
+          parseToolArguments(state);
+          candidates.states.delete(state);
+          state.candidates.delete(candidates);
+          if (state.candidates.size === 0 && !state.unindexed) unscopedToolCandidates.delete(state);
+        }
+        candidates.complete.clear();
+      };
 
       const thinkingEnabled = (options?.reasoning as unknown) !== false && (options?.reasoning as unknown) !== "off";
       const thinkingParser = thinkingEnabled ? new ThinkingTagParser(output, stream) : null;
@@ -422,228 +539,290 @@ export function streamQoder(
       // already been streamed by then, so the agent looked stuck with no error.
       let sawDone = false;
 
-      while (!sawDone) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (!sawDone) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        // Drop consumed prefix before appending so we do not keep growing a
-        // dead head of the string across chunks.
-        if (bufferStart > 0) {
-          buffer = buffer.substring(bufferStart);
-          bufferStart = 0;
-        }
-        buffer += decoder.decode(value, { stream: true });
-
-        while (true) {
-          const lineEnd = buffer.indexOf("\n", bufferStart);
-          if (lineEnd === -1) break;
-
-          const line = buffer.substring(bufferStart, lineEnd).trim();
-          bufferStart = lineEnd + 1;
-
-          if (!line.startsWith("data:")) continue;
-
-          const dataStr = line.substring(5).trim();
-          if (dataStr === "[DONE]") {
-            sawDone = true;
-            break;
+          // Drop consumed prefix before appending so we do not keep growing a
+          // dead head of the string across chunks.
+          if (bufferStart > 0) {
+            buffer = buffer.substring(bufferStart);
+            bufferStart = 0;
           }
+          buffer += decoder.decode(value, { stream: true });
 
-          try {
-            const envelope = JSON.parse(dataStr);
-            if (envelope.statusCodeValue && envelope.statusCodeValue !== 200) {
-              throw new Error(`Upstream status ${envelope.statusCodeValue}: ${envelope.body}`);
-            }
+          while (true) {
+            const lineEnd = buffer.indexOf("\n", bufferStart);
+            if (lineEnd === -1) break;
 
-            const innerStr = envelope.body;
-            // The gateway sends the sentinel wrapped in an envelope
-            // (`body: "[DONE]"`) as well as bare, and both mean the reply is
-            // over, so both have to end the read loop.
-            if (innerStr === "[DONE]") {
+            const line = buffer.substring(bufferStart, lineEnd).trim();
+            bufferStart = lineEnd + 1;
+
+            if (!line.startsWith("data:")) continue;
+
+            const dataStr = line.substring(5).trim();
+            if (dataStr === "[DONE]") {
               sawDone = true;
               break;
             }
-            if (!innerStr) continue;
 
-            const inner = JSON.parse(innerStr);
-            if (inner.id) output.responseId = inner.id as string;
-            if (inner.model) output.responseModel = inner.model as string;
-            if (inner.usage) {
-              applyQoderCredits(output.usage, inner.usage, model.provider === "qoder-cn" ? "qoder-cn" : "qoder");
-              const u = inner.usage as {
-                prompt_tokens?: number;
-                completion_tokens?: number;
-                total_tokens?: number;
-                completion_tokens_details?: { reasoning_tokens?: number };
-                prompt_tokens_details?: {
-                  cacheable_tokens?: number;
-                  cached_tokens?: number;
-                  cache_write_tokens?: number;
+            try {
+              const envelope = JSON.parse(dataStr);
+              if (envelope.statusCodeValue && envelope.statusCodeValue !== 200) {
+                throw new Error(`Upstream status ${envelope.statusCodeValue}: ${envelope.body}`);
+              }
+
+              const innerStr = envelope.body;
+              // The gateway sends the sentinel wrapped in an envelope
+              // (`body: "[DONE]"`) as well as bare, and both mean the reply is
+              // over, so both have to end the read loop.
+              if (innerStr === "[DONE]") {
+                sawDone = true;
+                break;
+              }
+              if (!innerStr) continue;
+
+              const inner = JSON.parse(innerStr);
+              if (inner.id) output.responseId = inner.id as string;
+              if (inner.model) output.responseModel = inner.model as string;
+              if (inner.usage) {
+                applyQoderCredits(output.usage, inner.usage, model.provider === "qoder-cn" ? "qoder-cn" : "qoder");
+                const u = inner.usage as {
+                  prompt_tokens?: number;
+                  completion_tokens?: number;
+                  total_tokens?: number;
+                  completion_tokens_details?: { reasoning_tokens?: number };
+                  prompt_tokens_details?: {
+                    cacheable_tokens?: number;
+                    cached_tokens?: number;
+                    cache_write_tokens?: number;
+                  };
                 };
-              };
-              // pi-core computes `promptTokens = input + cacheRead + cacheWrite`
-              // (Anthropic convention: `input` EXCLUDES cached/written tokens).
-              // Qoder follows OpenAI semantics where `prompt_tokens` INCLUDES
-              // `cached_tokens`, so subtract cacheRead (and cache_write_tokens
-              // when reported) to match the contract pi-ai's own OpenAI
-              // provider uses. `cacheable_tokens` is a capacity metric, not a
-              // write count (it is 0 even on first-turn writes), so it is NOT
-              // mapped to cacheWrite.
-              const promptTokens = u.prompt_tokens ?? 0;
-              const cacheReadTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
-              const cacheWriteTokens = u.prompt_tokens_details?.cache_write_tokens ?? 0;
-              output.usage.input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
-              output.usage.output = u.completion_tokens ?? 0;
-              output.usage.totalTokens = u.total_tokens ?? 0;
-              output.usage.cacheRead = cacheReadTokens;
-              output.usage.cacheWrite = cacheWriteTokens;
-            }
-            if (inner.choices && inner.choices.length > 0) {
-              const choice = inner.choices[0];
-              const delta = choice.delta;
+                // pi-core computes `promptTokens = input + cacheRead + cacheWrite`
+                // (Anthropic convention: `input` EXCLUDES cached/written tokens).
+                // Qoder follows OpenAI semantics where `prompt_tokens` INCLUDES
+                // `cached_tokens`, so subtract cacheRead (and cache_write_tokens
+                // when reported) to match the contract pi-ai's own OpenAI
+                // provider uses. `cacheable_tokens` is a capacity metric, not a
+                // write count (it is 0 even on first-turn writes), so it is NOT
+                // mapped to cacheWrite.
+                const promptTokens = u.prompt_tokens ?? 0;
+                const cacheReadTokens = u.prompt_tokens_details?.cached_tokens ?? 0;
+                const cacheWriteTokens = u.prompt_tokens_details?.cache_write_tokens ?? 0;
+                output.usage.input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+                output.usage.output = u.completion_tokens ?? 0;
+                output.usage.totalTokens = u.total_tokens ?? 0;
+                output.usage.cacheRead = cacheReadTokens;
+                output.usage.cacheWrite = cacheWriteTokens;
+              }
+              if (inner.choices && inner.choices.length > 0) {
+                const choice = inner.choices[0];
+                const delta = choice.delta;
 
-              if (delta) {
-                // 1. Process reasoning/thinking content (API reasoning)
-                if (delta.reasoning_content) {
-                  // Qoder's backend sometimes routes a literal `<thinking>`
-                  // opener into reasoning_content (with the matching
-                  // `</thinking>` closer landing in the content stream), and
-                  // sometimes leaks unparsed DSML tool-call markup there. Strip
-                  // both so the thinking block stays clean, matching the SDK's
-                  // ContentBlock model.
-                  rawReasoningTail = (rawReasoningTail + delta.reasoning_content).slice(-512);
-                  const reasoningChunk = stripDsmlResidue(stripThinkingTags(delta.reasoning_content));
-                  if (reasoningChunk) {
-                    if (thinkingBlockIndex === -1) {
-                      thinkingBlockIndex = output.content.length;
-                      output.content.push({ type: "thinking", thinking: "" });
-                      stream.push({ type: "thinking_start", contentIndex: thinkingBlockIndex, partial: output });
-                    }
-                    const block = output.content[thinkingBlockIndex] as ThinkingContent;
-                    block.thinking += reasoningChunk;
-                    stream.push({
-                      type: "thinking_delta",
-                      contentIndex: thinkingBlockIndex,
-                      delta: reasoningChunk,
-                      partial: output,
-                    });
-                  }
-                }
-
-                // 2. Process text content
-                if (delta.content) {
-                  // End API thinking block if active
-                  if (thinkingBlockIndex !== -1) {
-                    const block = output.content[thinkingBlockIndex] as ThinkingContent;
-                    stream.push({
-                      type: "thinking_end",
-                      contentIndex: thinkingBlockIndex,
-                      content: block.thinking,
-                      partial: output,
-                    });
-                    thinkingBlockIndex = -1;
-                  }
-
-                  if (thinkingParser) {
-                    thinkingParser.processChunk(delta.content);
-                  } else {
-                    if (contentBlockIndex === -1) {
-                      contentBlockIndex = output.content.length;
-                      output.content.push({ type: "text", text: "" });
-                      stream.push({ type: "text_start", contentIndex: contentBlockIndex, partial: output });
-                    }
-                    const block = output.content[contentBlockIndex] as TextContent;
-                    block.text += delta.content;
-                    stream.push({
-                      type: "text_delta",
-                      contentIndex: contentBlockIndex,
-                      delta: delta.content,
-                      partial: output,
-                    });
-                  }
-                }
-
-                // 3. Process tool calls
-                if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-                  for (const tc of delta.tool_calls) {
-                    const idx = tc.index ?? 0;
-                    if (!toolCallsState[idx]) {
-                      toolCallsState[idx] = { arguments: "", id: "", name: "", contentIndex: 0 };
-                    }
-                    const state = toolCallsState[idx];
-                    if (tc.id) state.id = tc.id;
-                    if (tc.function?.name) state.name = tc.function.name;
-
-                    // Open the block as soon as the call is IDENTIFIABLE, not
-                    // when its first argument byte arrives. A call whose
-                    // arguments are absent or an empty string — a no-argument
-                    // tool, or a model that sends id+name and then stops — used
-                    // to create a toolCallsState entry and no content block, so
-                    // the finalizer below saw a non-empty state array, set
-                    // stopReason "toolUse", and handed back a message with no
-                    // tool call in it. The agent loop then had nothing to run
-                    // and the turn simply ended, mid-task and without an error.
-                    if (state.emittedStart === undefined && (state.id || state.name)) {
-                      state.emittedStart = true;
-                      state.contentIndex = output.content.length;
-                      output.content.push({
-                        type: "toolCall",
-                        id: state.id,
-                        name: state.name,
-                        arguments: {},
-                      } satisfies ToolCall);
-                      stream.push({ type: "toolcall_start", contentIndex: state.contentIndex, partial: output });
-                    }
-
-                    // id and name can arrive after the block is open; keep it
-                    // in step, since the finalizer only rewrites `arguments`.
-                    if (state.emittedStart) {
-                      const block = output.content[state.contentIndex] as ToolCall;
-                      block.id = state.id;
-                      block.name = state.name;
-                    }
-
-                    if (tc.function?.arguments) {
-                      const argDelta = tc.function.arguments;
-                      state.arguments += argDelta;
+                if (delta) {
+                  // 1. Process reasoning/thinking content (API reasoning)
+                  if (delta.reasoning_content) {
+                    // Qoder's backend sometimes routes a literal `<thinking>`
+                    // opener into reasoning_content (with the matching
+                    // `</thinking>` closer landing in the content stream), and
+                    // sometimes leaks unparsed DSML tool-call markup there. Strip
+                    // both so the thinking block stays clean, matching the SDK's
+                    // ContentBlock model.
+                    rawReasoningTail = (rawReasoningTail + delta.reasoning_content).slice(-512);
+                    const reasoningChunk = stripDsmlResidue(stripThinkingTags(delta.reasoning_content));
+                    if (reasoningChunk) {
+                      if (thinkingBlockIndex === -1) {
+                        thinkingBlockIndex = output.content.length;
+                        output.content.push({ type: "thinking", thinking: "" });
+                        stream.push({ type: "thinking_start", contentIndex: thinkingBlockIndex, partial: output });
+                      }
+                      const block = output.content[thinkingBlockIndex] as ThinkingContent;
+                      block.thinking += reasoningChunk;
                       stream.push({
-                        type: "toolcall_delta",
-                        contentIndex: state.contentIndex,
-                        delta: argDelta,
+                        type: "thinking_delta",
+                        contentIndex: thinkingBlockIndex,
+                        delta: reasoningChunk,
                         partial: output,
                       });
                     }
                   }
+
+                  // 2. Process text content
+                  if (delta.content) {
+                    // End API thinking block if active
+                    if (thinkingBlockIndex !== -1) {
+                      const block = output.content[thinkingBlockIndex] as ThinkingContent;
+                      stream.push({
+                        type: "thinking_end",
+                        contentIndex: thinkingBlockIndex,
+                        content: block.thinking,
+                        partial: output,
+                      });
+                      thinkingBlockIndex = -1;
+                    }
+
+                    if (thinkingParser) {
+                      thinkingParser.processChunk(delta.content);
+                      refreshToolIndexes();
+                    } else {
+                      if (contentBlockIndex === -1) {
+                        contentBlockIndex = output.content.length;
+                        output.content.push({ type: "text", text: "" });
+                        stream.push({ type: "text_start", contentIndex: contentBlockIndex, partial: output });
+                      }
+                      const block = output.content[contentBlockIndex] as TextContent;
+                      block.text += delta.content;
+                      stream.push({
+                        type: "text_delta",
+                        contentIndex: contentBlockIndex,
+                        delta: delta.content,
+                        partial: output,
+                      });
+                    }
+                  }
+
+                  // 3. Process tool calls
+                  if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+                    for (const tc of delta.tool_calls) {
+                      const id = tc.id || "";
+                      const name = tc.function?.name || "";
+                      const argDelta = tc.function?.arguments ?? "";
+                      if (typeof id !== "string" || typeof name !== "string") {
+                        throw new Error("Tool-call identity conflict: invalid metadata");
+                      }
+                      if (typeof argDelta !== "string") throw new Error("Invalid tool-call argument fragment");
+                      if (!id && !name && !argDelta) continue;
+
+                      const index = typeof tc.index === "number" ? tc.index : undefined;
+                      let candidates: ToolCallCandidates | undefined;
+                      if (index !== undefined) {
+                        candidates = toolCandidatesByIndex.get(index);
+                        if (!candidates) {
+                          candidates = { states: new Set(), complete: new Set() };
+                          toolCandidatesByIndex.set(index, candidates);
+                        }
+                      }
+                      let state = id ? toolCallsById.get(id) : undefined;
+                      if (id && candidates && (!state || !candidates.states.has(state))) {
+                        retireCompleteCandidates(candidates);
+                      }
+                      const available = candidates?.states ?? unscopedToolCandidates;
+                      if (!state) {
+                        const only = available.size === 1 ? available.values().next().value : undefined;
+                        if (!id && available.size > 1) {
+                          throw new Error(`Ambiguous tool-call continuation (candidates=${available.size})`);
+                        }
+                        // An explicit new ID never overwrites another identity.
+                        // Only a unique, still-unidentified provisional can bind.
+                        if (only && (!id || !only.id)) state = only;
+                        else {
+                          state = {
+                            argumentChunks: [],
+                            argumentLength: 0,
+                            depth: 0,
+                            inString: false,
+                            escaped: false,
+                            complete: false,
+                            id: "",
+                            name: "",
+                            contentIndex: -1,
+                            candidates: new Set(),
+                            unindexed: index === undefined,
+                          };
+                          toolCallsState.push(state);
+                        }
+                      }
+                      if (name && state.name && name !== state.name) {
+                        throw new Error("Tool-call identity conflict: inconsistent name");
+                      }
+                      const newlyIdentified = !!id && !state.id;
+                      if (id) {
+                        state.id = id;
+                        toolCallsById.set(id, state);
+                      }
+                      if (name) state.name = name;
+                      unscopedToolCandidates.add(state);
+                      if (candidates) {
+                        state.unindexed = false;
+                        state.candidates.add(candidates);
+                        candidates.states.add(state);
+                        if (state.complete && state.id) candidates.complete.add(state);
+                      }
+
+                      const wasComplete = state.complete;
+                      if (argDelta) appendToolArguments(state, argDelta);
+                      if (state.complete && state.id && (!wasComplete || newlyIdentified)) {
+                        // Each association is registered at most once on closure,
+                        // not revisited on every fragment or repeated ID.
+                        for (const scope of state.candidates) scope.complete.add(state);
+                      }
+
+                      if (!state.block && (state.id || state.name)) {
+                        state.block = { type: "toolCall", id: state.id, name: state.name, arguments: {} };
+                        state.contentIndex = output.content.length;
+                        output.content.push(state.block);
+                        toolStatesByBlock.set(state.block, state);
+                        lastToolState = state;
+                        stream.push({ type: "toolcall_start", contentIndex: state.contentIndex, partial: output });
+                        // Argument-only provisional fragments have no content
+                        // position until this block exists. Replay them in order.
+                        for (const fragment of state.argumentChunks) {
+                          stream.push({
+                            type: "toolcall_delta",
+                            contentIndex: state.contentIndex,
+                            delta: fragment,
+                            partial: output,
+                          });
+                        }
+                      } else if (state.block) {
+                        state.block.id = state.id;
+                        state.block.name = state.name;
+                        if (argDelta) {
+                          stream.push({
+                            type: "toolcall_delta",
+                            contentIndex: state.contentIndex,
+                            delta: argDelta,
+                            partial: output,
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+
+                if (choice.finish_reason) {
+                  // Preserve the real upstream finish_reason (e.g. "length",
+                  // "content_filter") instead of forcing "stop" later.
+                  output.stopReason = choice.finish_reason as AssistantMessage["stopReason"];
                 }
               }
-
-              if (choice.finish_reason) {
-                // Preserve the real upstream finish_reason (e.g. "length",
-                // "content_filter") instead of forcing "stop" later.
-                output.stopReason = choice.finish_reason as AssistantMessage["stopReason"];
+            } catch (e) {
+              // A single malformed SSE line shouldn't kill the stream — skip it.
+              // But a genuine upstream error (thrown below) must propagate to the
+              // outer catch and surface as stopReason="error", not be swallowed.
+              if (e instanceof SyntaxError) {
+                if (process.env.QODER_DEBUG) {
+                  console.error("[pi-provider-qoder] skipping malformed SSE line:", dataStr.slice(0, 200));
+                }
+                continue;
               }
+              throw e;
             }
-          } catch (e) {
-            // A single malformed SSE line shouldn't kill the stream — skip it.
-            // But a genuine upstream error (thrown below) must propagate to the
-            // outer catch and surface as stopReason="error", not be swallowed.
-            if (e instanceof SyntaxError) {
-              if (process.env.QODER_DEBUG) {
-                console.error("[pi-provider-qoder] skipping malformed SSE line:", dataStr.slice(0, 200));
-              }
-              continue;
-            }
-            throw e;
           }
+        }
+      } finally {
+        // Release on DONE, abort, and identity/argument failures alike.
+        try {
+          await reader.cancel().catch(() => {});
+        } finally {
+          reader.releaseLock();
         }
       }
 
-      // Stop reading and let the connection go once the reply is complete.
-      // Without this the body stays open until the server times it out.
-      await reader.cancel().catch(() => {});
-
       if (thinkingParser) {
         thinkingParser.finalize();
+        refreshToolIndexes();
       }
 
       if (thinkingBlockIndex !== -1) {
@@ -656,33 +835,26 @@ export function streamQoder(
         });
       }
 
+      // Validate the whole batch before publishing any successful end event.
       for (const state of toolCallsState) {
-        if (state?.emittedStart && !state.emittedEnd) {
-          state.emittedEnd = true;
-          let args = {};
-          try {
-            args = JSON.parse(state.arguments || "{}");
-          } catch {}
-          const block = output.content[state.contentIndex] as ToolCall;
-          block.arguments = args;
-          stream.push({
-            type: "toolcall_end",
-            contentIndex: state.contentIndex,
-            toolCall: {
-              type: "toolCall",
-              id: state.id,
-              name: state.name,
-              arguments: args,
-            },
-            partial: output,
-          });
+        if (!state.id || !state.name) {
+          throw new Error(`Unresolved tool-call identity (characters=${state.argumentLength})`);
         }
+        parseToolArguments(state);
+      }
+      // Map insertion order is the order calls first became identifiable,
+      // independent of sparse/reused upstream indexes and provisional buffers.
+      for (const [block, state] of toolStatesByBlock) {
+        block.arguments = parseToolArguments(state);
+        stream.push({
+          type: "toolcall_end",
+          contentIndex: state.contentIndex,
+          toolCall: block,
+          partial: output,
+        });
       }
 
-      // Guarded on blocks that actually reached the message, not on the state
-      // array being non-empty. Claiming "toolUse" for a message carrying no
-      // tool call is what turned a malformed stream into a silent dead end.
-      if (toolCallsState.some((state) => state?.emittedStart)) {
+      if (toolStatesByBlock.size > 0 && output.stopReason !== "length") {
         output.stopReason = "toolUse";
       }
       // A turn the gateway stripped the tool call out of has no text and no tool
