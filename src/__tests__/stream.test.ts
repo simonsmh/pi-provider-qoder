@@ -612,6 +612,332 @@ describe("streamQoder", () => {
   });
 });
 
+// Synthetic wire inputs only; snapshots are copied synchronously at push(),
+// because SDK partial messages are live references, not historical snapshots.
+describe("streamQoder response aggregation contract", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function tool(index: number | undefined, id?: string, name?: string, args?: string): object {
+    return { index, id, function: { name, arguments: args } };
+  }
+
+  async function run(deltas: object[], finish = "tool_calls", byteSize?: number) {
+    const snapshots: AssistantMessageEvent[] = [];
+    const StreamCtor = (PiAi as unknown as { AssistantMessageEventStream: new () => AssistantMessageEventStream })
+      .AssistantMessageEventStream;
+    const prototype = StreamCtor.prototype;
+    const push = prototype.push;
+    vi.spyOn(prototype, "push").mockImplementation(function (this: AssistantMessageEventStream, event) {
+      snapshots.push(structuredClone(event) as AssistantMessageEvent);
+      return push.call(this, event);
+    });
+    const frames = [...deltas.map((delta) => sseEnvelope(chunk(delta))), sseEnvelope(finishChunk(finish)), DONE_SSE];
+    const bytes = new TextEncoder().encode(frames.join(""));
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (byteSize) {
+          for (let offset = 0; offset < bytes.length; offset += byteSize) {
+            controller.enqueue(bytes.slice(offset, offset + byteSize));
+          }
+        } else {
+          for (const frame of frames) controller.enqueue(new TextEncoder().encode(frame));
+        }
+        // Leave open: DONE and all error paths must release the reader.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "synthetic" }));
+    return { events, snapshots, body, cancelled };
+  }
+
+  type Result = Awaited<ReturnType<typeof run>>;
+  function success(
+    result: Result,
+    expected: Array<{ id: string; name: string; arguments: object }>,
+    reason = "toolUse",
+  ) {
+    expect(result.events.filter((event) => event.type === "error")).toEqual([]);
+    const done = result.events.filter((event) => event.type === "done");
+    expect(done).toHaveLength(1);
+    if (done[0].type !== "done") throw new Error("missing done");
+    expect(done[0].message.stopReason).toBe(reason);
+    expect(done[0].reason).toBe(reason);
+    expect(done[0].message.content.filter((block) => block.type === "toolCall")).toEqual(
+      expected.map((call) => ({ type: "toolCall", ...call })),
+    );
+    expect(result.snapshots[0].type).toBe("start");
+    expect(result.snapshots.filter((event) => event.type === "toolcall_start")).toHaveLength(expected.length);
+    const ends = result.snapshots.filter((event) => event.type === "toolcall_end");
+    expect(ends.map((event) => event.toolCall)).toEqual(expected.map((call) => ({ type: "toolCall", ...call })));
+    for (const event of result.snapshots) {
+      if (event.type === "toolcall_start" || event.type === "toolcall_delta" || event.type === "toolcall_end") {
+        expect(event.partial.content[event.contentIndex]?.type).toBe("toolCall");
+        if (event.type === "toolcall_end") expect(event.partial.content[event.contentIndex]).toEqual(event.toolCall);
+      }
+    }
+    expect(result.cancelled).toBe(true);
+  }
+
+  function failure(result: Result, category: RegExp) {
+    expect(result.events.filter((event) => event.type === "done")).toEqual([]);
+    expect(result.events.filter((event) => event.type === "error")).toHaveLength(1);
+    const error = result.events.find((event) => event.type === "error");
+    expect(error?.reason).toBe("error");
+    expect(error?.error.stopReason).toBe("error");
+    expect(error?.error.errorMessage).toMatch(category);
+    expect(error?.error.errorMessage).not.toMatch(/server error|synthetic-private/);
+    expect(result.snapshots.filter((event) => event.type === "toolcall_end")).toEqual([]);
+    expect(result.cancelled).toBe(true);
+  }
+
+  const a = { id: "synthetic_a", name: "lookup", arguments: { path: "/a" } };
+  const b = { id: "synthetic_b", name: "lookup", arguments: { path: "/b" } };
+
+  it("C01 preserves stable parallel indexes and ID-less continuations", async () => {
+    const result = await run([
+      { tool_calls: [tool(7, a.id, a.name, '{"path":'), tool(2, b.id, b.name, '{"path":')] },
+      { tool_calls: [tool(2, undefined, undefined, '"/b"}'), tool(7, undefined, undefined, '"/a"}')] },
+    ]);
+    success(result, [a, b]);
+    expect(result.snapshots.filter((event) => event.type === "toolcall_delta")).toHaveLength(4);
+  });
+
+  it("C01 positive control preserves ordinary stable parallel indexes", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":'), tool(1, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(1, undefined, undefined, '"/b"}'), tool(0, undefined, undefined, '"/a"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it("C02 C03 separates same-index same-name IDs after a complete object", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":"/a"}')] },
+        { tool_calls: [tool(0, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(0, undefined, undefined, '"/b"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it("C04 routes repeated IDs across index changes without duplicating blocks", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(3, a.id, a.name, '{"path":')] },
+        { tool_calls: [tool(9, a.id, a.name, '"/a"}')] },
+        { tool_calls: [tool(3, a.id, undefined, " \n")] },
+      ]),
+      [a],
+    );
+  });
+
+  it.each(["arguments-first", "name-first"])("C05 binds a unique provisional state: %s", async (order) => {
+    const prefix = order === "arguments-first" ? tool(4, undefined, undefined, '{"path":') : tool(4, undefined, a.name);
+    const middle =
+      order === "arguments-first" ? tool(4, a.id, a.name, '"/a"}') : tool(4, undefined, undefined, '{"path":"/a"}');
+    const result = await run([
+      { content: "prefix" },
+      { tool_calls: [prefix] },
+      { tool_calls: [middle] },
+      { tool_calls: [tool(4, a.id, a.name)] },
+    ]);
+    success(result, [a]);
+    const deltas = result.snapshots.filter((event) => event.type === "toolcall_delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe('{"path":"/a"}');
+  });
+
+  it.each([
+    ["missing ID", [tool(0, undefined, "lookup", "{}")], /identity|unresolved|missing.*id/i],
+    ["missing name", [tool(0, a.id, undefined, "{}")], /identity|unresolved|missing.*name/i],
+    ["name conflict", [tool(0, a.id, "lookup", "{"), tool(0, a.id, "other", "}")], /identity|conflict/i],
+  ] as const)("C06 rejects %s", async (_label, calls, category) => {
+    failure(await run(calls.map((call) => ({ tool_calls: [call] }))), category);
+  });
+
+  it("C07 routes explicitly identified interleaving on a reused index", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":'), tool(0, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(0, a.id, undefined, '"/a"}'), tool(0, b.id, undefined, '"/b"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it.each(["{", ""])("C08 rejects ambiguous continuation even if later ID arrives (prefix=%j)", async (prefix) => {
+    failure(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, prefix), tool(0, b.id, b.name, prefix)] },
+        { tool_calls: [tool(0, undefined, undefined, '"synthetic-private":1}')] },
+        { tool_calls: [tool(0, b.id, undefined, "{}")] },
+      ]),
+      /ambiguous tool-call continuation/i,
+    );
+  });
+
+  it("C09 continues a unique call without index", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(5, a.id, a.name, '{"path":')] },
+        { tool_calls: [tool(undefined, undefined, undefined, '"/a"}')] },
+      ]),
+      [a],
+    );
+  });
+
+  it("C09 routes explicit IDs without indexes among parallel calls", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(undefined, a.id, a.name, '{"path":'), tool(undefined, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(undefined, b.id, undefined, '"/b"}'), tool(undefined, a.id, undefined, '"/a"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it("C09 rejects absent index with multiple candidates", async () => {
+    failure(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, "{"), tool(1, b.id, b.name, "{")] },
+        { tool_calls: [tool(undefined, undefined, undefined, "}")] },
+      ]),
+      /ambiguous tool-call continuation/i,
+    );
+  });
+
+  it.each([undefined, "", "{}"])("C10 preserves independent no-argument calls (%j)", async (args) => {
+    success(await run([{ tool_calls: [tool(0, a.id, a.name, args), tool(0, b.id, b.name, args)] }]), [
+      { ...a, arguments: {} },
+      { ...b, arguments: {} },
+    ]);
+  });
+
+  it.each(["{", '{"path":', "{}{}", "{}garbage", "[]", "null", "1", '"text"', "true", " \n\t", '{"x":}', '{"x":1,}'])(
+    "C11 rejects non-object or invalid nonempty JSON %j without fallback",
+    async (args) => {
+      failure(await run([{ tool_calls: [tool(0, a.id, a.name, args)] }]), /json|argument|object|incomplete/i);
+    },
+  );
+
+  it("C11 accepts trailing whitespace on one stable object", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":"/a"}')] },
+        { tool_calls: [tool(0, undefined, undefined, " \n\t")] },
+      ]),
+      [a],
+    );
+  });
+
+  it("C12 ignores a completely empty placeholder", async () => {
+    const result = await run([{ content: "synthetic text" }, { tool_calls: [tool(0)] }], "stop");
+    success(result, [], "stop");
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.message.content).toEqual([{ type: "text", text: "synthetic text" }]);
+  });
+
+  it.each([false, true])(
+    "C13 preserves block identity after tag thinking insertion (API reasoning=%s)",
+    async (apiReasoning) => {
+      const result = await run([
+        ...(apiReasoning ? [{ reasoning_content: "api thought" }] : []),
+        { content: "before" },
+        { tool_calls: [tool(0, a.id, a.name, '{"path":')] },
+        { content: "<thinking>tag thought</thinking>after" },
+        { tool_calls: [tool(0, a.id, undefined, '"/a"}')] },
+      ]);
+      success(result, [a]);
+      const done = result.events.find((event) => event.type === "done");
+      expect(done?.message.content.filter((block) => block.type !== "toolCall")).toEqual([
+        ...(apiReasoning ? [{ type: "thinking", thinking: "api thought" }] : []),
+        { type: "thinking", thinking: "tag thought" },
+        { type: "text", text: "before" },
+        { type: "text", text: "after" },
+      ]);
+      for (const event of result.snapshots) {
+        if (event.type === "toolcall_start" || event.type === "toolcall_delta") {
+          expect(event.partial.content[event.contentIndex]).toMatchObject({ type: "toolCall", id: a.id, name: a.name });
+        }
+      }
+      const first = result.snapshots.find((event) => event.type === "toolcall_start");
+      expect(
+        first?.partial.content.some((block) => block.type === "thinking" && block.thinking === "tag thought"),
+      ).toBe(false);
+    },
+  );
+
+  it.each([undefined, 100000, 17, 1])("C14 preserves UTF-8 and JSON escapes with byte size %s", async (size) => {
+    const args = { path: "/合成/😀", value: 'quote" slash\\ newline\n } {' };
+    const json = JSON.stringify(args);
+    const split = json.indexOf('\\"') + 1;
+    success(
+      await run(
+        [
+          { tool_calls: [tool(0, a.id, a.name, json.slice(0, split))] },
+          { tool_calls: [tool(0, undefined, undefined, json.slice(split))] },
+        ],
+        "tool_calls",
+        size,
+      ),
+      [{ ...a, arguments: args }],
+    );
+  });
+
+  it("C15 validates the whole batch before any successful toolcall_end", async () => {
+    failure(
+      await run([{ tool_calls: [tool(0, a.id, a.name, "{}"), tool(1, b.id, b.name, '{"synthetic-private":')] }]),
+      /json|argument|incomplete/i,
+    );
+  });
+
+  it("C15 preserves length for a complete tool object", async () => {
+    success(await run([{ tool_calls: [tool(0, a.id, a.name, '{"path":"/a"}')] }], "length"), [a], "length");
+  });
+
+  it("C15 rejects truncated tool JSON even with length", async () => {
+    failure(await run([{ tool_calls: [tool(0, a.id, a.name, '{"path":')] }], "length"), /json|argument|incomplete/i);
+  });
+
+  it("C15 aborts an in-progress tool response and releases its reader", async () => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(target) {
+        target.enqueue(new TextEncoder().encode(sseEnvelope(chunk({ tool_calls: [tool(0, a.id, a.name, "{")] }))));
+        controller.signal.addEventListener("abort", () => target.error(new DOMException("Aborted", "AbortError")));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "synthetic", signal: controller.signal });
+    const events: AssistantMessageEvent[] = [];
+    for await (const event of stream) {
+      events.push(event);
+      if (event.type === "toolcall_delta") controller.abort();
+    }
+    expect(events.filter((event) => event.type === "done" || event.type === "toolcall_end")).toEqual([]);
+    const errors = events.filter((event) => event.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.stopReason).toBe("aborted");
+    // An errored ReadableStream need not call its underlying cancel callback,
+    // but parser ownership of the reader must still be released.
+    expect(cancelled || !body.locked).toBe(true);
+  });
+});
+
 describe("resolveRequestContext", () => {
   const flatContext = {
     systemPrompt: "legacy prompt",
