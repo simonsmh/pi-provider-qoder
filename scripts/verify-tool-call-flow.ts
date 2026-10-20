@@ -54,7 +54,16 @@ Object.assign(process.env, {
   TMPDIR: path.join(temporary, "tmp"),
   JITI_FS_CACHE: "false",
 });
-for (const directory of [...Object.values(process.env), path.join(temporary, "workspace")]) {
+for (const directory of [
+  process.env.HOME,
+  process.env.XDG_CONFIG_HOME,
+  process.env.XDG_CACHE_HOME,
+  process.env.XDG_DATA_HOME,
+  process.env.XDG_STATE_HOME,
+  process.env.PI_CODING_AGENT_DIR,
+  process.env.TMPDIR,
+  path.join(temporary, "workspace"),
+]) {
   fs.mkdirSync(directory!, { recursive: true, mode: 0o700 });
 }
 process.chdir(path.join(temporary, "workspace"));
@@ -204,6 +213,18 @@ const fixtures: Fixture[] = [
     ],
     expected: [],
     providerError: true,
+  },
+  {
+    name: "required-path-zero-bytes-sdk-error",
+    deltas: [delta(0, "required_empty_bytes_A", "fixture_read", "")],
+    expected: [{ id: "required_empty_bytes_A", name: "fixture_read", args: {} }],
+    schemaError: true,
+  },
+  {
+    name: "required-path-explicit-empty-object-sdk-error",
+    deltas: [delta(0, "required_empty_object_A", "fixture_read", "{}")],
+    expected: [{ id: "required_empty_object_A", name: "fixture_read", args: {} }],
+    schemaError: true,
   },
 ];
 function envelope(body: unknown): string {
@@ -464,6 +485,18 @@ try {
             requests[1].messages.filter((m) => m.role === "tool").map((m) => m.content),
             fixture.expected.map((c) => `RESULT:${c.id}:${JSON.stringify(c.args)}`),
           );
+        else {
+          const errorTexts = results.map((result) =>
+            result.content.filter((content) => content.type === "text").map((content) => content.text).join(""),
+          );
+          assert(errorTexts.every((text, index) =>
+            text.startsWith(`Validation failed for tool "${fixture.expected[index].name}":`),
+          ));
+          assert.deepEqual(
+            requests[1].messages.filter((m) => m.role === "tool").map((m) => m.content),
+            errorTexts,
+          );
+        }
         assert.equal(assistants.at(-1)?.stopReason, "stop");
         assert.equal(session.getLastAssistantText(), "SYNTHETIC_DONE");
       }
