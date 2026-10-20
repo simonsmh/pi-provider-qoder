@@ -27,6 +27,7 @@ import { transformMessagesForQoder, transformTools } from "./transform.js";
 interface ToolCallCandidates {
   states: Set<ToolCallState>;
   complete: Set<ToolCallState>;
+  unique: ToolCallState | undefined;
 }
 
 interface ToolCallState {
@@ -44,6 +45,40 @@ interface ToolCallState {
   contentIndex: number;
   candidates: Set<ToolCallCandidates>;
   unindexed: boolean;
+}
+
+interface ToolCallAggregation {
+  states: ToolCallState[];
+  byId: Map<string, ToolCallState>;
+  byIndex: Map<number, ToolCallCandidates>;
+  unscopedCandidates: Set<ToolCallState>;
+  statesByBlock: Map<ToolCall, ToolCallState>;
+  lastToolState?: ToolCallState;
+}
+
+function refreshToolIndexes(output: AssistantMessage, toolCalls: ToolCallAggregation): void {
+  const lastToolState = toolCalls.lastToolState;
+  if (!lastToolState || output.content[lastToolState.contentIndex] === lastToolState.block) return;
+  // ThinkingTagParser.emitThinking() can splice only when creating its first
+  // thinking block. All other layout changes append. Refresh in one scan.
+  for (let index = 0; index < output.content.length; index++) {
+    const block = output.content[index];
+    if (block.type !== "toolCall") continue;
+    const state = toolCalls.statesByBlock.get(block);
+    if (state) state.contentIndex = index;
+  }
+}
+
+function retireCompleteCandidates(toolCalls: ToolCallAggregation, candidates: ToolCallCandidates): void {
+  for (const state of candidates.complete) {
+    // Structural closure alone is not sufficient evidence of a boundary.
+    parseToolArguments(state);
+    candidates.states.delete(state);
+    state.candidates.delete(candidates);
+    if (state.candidates.size === 0 && !state.unindexed) toolCalls.unscopedCandidates.delete(state);
+  }
+  candidates.complete.clear();
+  candidates.unique = candidates.states.size === 1 ? candidates.states.values().next().value : undefined;
 }
 
 const TOOL_ARGUMENT_STRUCTURE = /["\\{}[\]]/g;
@@ -496,36 +531,7 @@ export function streamQoder(
       // tail matters (the degenerate-turn check looks for trailing markup), so
       // this stays bounded instead of growing with the reply.
       let rawReasoningTail = "";
-      const toolCallsState: ToolCallState[] = [];
-      const toolCallsById = new Map<string, ToolCallState>();
-      const toolCandidatesByIndex = new Map<number, ToolCallCandidates>();
-      const unscopedToolCandidates = new Set<ToolCallState>();
-      const toolStatesByBlock = new Map<ToolCall, ToolCallState>();
-      let lastToolState: ToolCallState | undefined;
-
-      const refreshToolIndexes = () => {
-        if (!lastToolState || output.content[lastToolState.contentIndex] === lastToolState.block) return;
-        // ThinkingTagParser.emitThinking() can splice only when creating its
-        // first thinking block. All other layout changes append. Check the
-        // last tool in O(1), then refresh the shifted suffix in one scan.
-        for (let index = 0; index < output.content.length; index++) {
-          const block = output.content[index];
-          if (block.type !== "toolCall") continue;
-          const state = toolStatesByBlock.get(block);
-          if (state) state.contentIndex = index;
-        }
-      };
-
-      const retireCompleteCandidates = (candidates: ToolCallCandidates) => {
-        for (const state of candidates.complete) {
-          // Structural closure alone is not sufficient evidence of a boundary.
-          parseToolArguments(state);
-          candidates.states.delete(state);
-          state.candidates.delete(candidates);
-          if (state.candidates.size === 0 && !state.unindexed) unscopedToolCandidates.delete(state);
-        }
-        candidates.complete.clear();
-      };
+      let toolCalls: ToolCallAggregation | undefined;
 
       const thinkingEnabled = (options?.reasoning as unknown) !== false && (options?.reasoning as unknown) !== "off";
       const thinkingParser = thinkingEnabled ? new ThinkingTagParser(output, stream) : null;
@@ -664,7 +670,7 @@ export function streamQoder(
 
                     if (thinkingParser) {
                       thinkingParser.processChunk(delta.content);
-                      refreshToolIndexes();
+                      if (toolCalls?.lastToolState) refreshToolIndexes(output, toolCalls);
                     } else {
                       if (contentBlockIndex === -1) {
                         contentBlockIndex = output.content.length;
@@ -694,29 +700,44 @@ export function streamQoder(
                       if (typeof argDelta !== "string") throw new Error("Invalid tool-call argument fragment");
                       if (!id && !name && !argDelta) continue;
 
+                      toolCalls ??= {
+                        states: [],
+                        byId: new Map(),
+                        byIndex: new Map(),
+                        unscopedCandidates: new Set(),
+                        statesByBlock: new Map(),
+                      };
                       const index = typeof tc.index === "number" ? tc.index : undefined;
                       let candidates: ToolCallCandidates | undefined;
                       if (index !== undefined) {
-                        candidates = toolCandidatesByIndex.get(index);
+                        candidates = toolCalls.byIndex.get(index);
                         if (!candidates) {
-                          candidates = { states: new Set(), complete: new Set() };
-                          toolCandidatesByIndex.set(index, candidates);
+                          candidates = { states: new Set(), complete: new Set(), unique: undefined };
+                          toolCalls.byIndex.set(index, candidates);
                         }
                       }
-                      let state = id ? toolCallsById.get(id) : undefined;
-                      if (id && candidates && (!state || !candidates.states.has(state))) {
-                        retireCompleteCandidates(candidates);
+                      let state = id ? toolCalls.byId.get(id) : undefined;
+                      let associated = !!state && !!candidates && candidates.states.has(state);
+                      if (id && candidates && !associated && candidates.complete.size > 0) {
+                        retireCompleteCandidates(toolCalls, candidates);
                       }
-                      const available = candidates?.states ?? unscopedToolCandidates;
+                      const available = candidates?.states ?? toolCalls.unscopedCandidates;
                       if (!state) {
-                        const only = available.size === 1 ? available.values().next().value : undefined;
+                        const only =
+                          available.size === 1
+                            ? candidates
+                              ? candidates.unique
+                              : available.values().next().value
+                            : undefined;
                         if (!id && available.size > 1) {
                           throw new Error(`Ambiguous tool-call continuation (candidates=${available.size})`);
                         }
                         // An explicit new ID never overwrites another identity.
                         // Only a unique, still-unidentified provisional can bind.
-                        if (only && (!id || !only.id)) state = only;
-                        else {
+                        if (only && (!id || !only.id)) {
+                          state = only;
+                          associated = candidates !== undefined;
+                        } else {
                           state = {
                             argumentChunks: [],
                             argumentLength: 0,
@@ -730,24 +751,30 @@ export function streamQoder(
                             candidates: new Set(),
                             unindexed: index === undefined,
                           };
-                          toolCallsState.push(state);
+                          toolCalls.states.push(state);
                         }
                       }
                       if (name && state.name && name !== state.name) {
                         throw new Error("Tool-call identity conflict: inconsistent name");
                       }
                       const newlyIdentified = !!id && !state.id;
-                      if (id) {
+                      const newlyNamed = !!name && !state.name;
+                      if (newlyIdentified) {
                         state.id = id;
-                        toolCallsById.set(id, state);
+                        toolCalls.byId.set(id, state);
                       }
-                      if (name) state.name = name;
-                      unscopedToolCandidates.add(state);
-                      if (candidates) {
-                        state.unindexed = false;
-                        state.candidates.add(candidates);
-                        candidates.states.add(state);
-                        if (state.complete && state.id) candidates.complete.add(state);
+                      if (newlyNamed) state.name = name;
+                      if (!associated) {
+                        // Indexed continuations already have all three links.
+                        // Unindexed explicit IDs can reactivate retired states.
+                        toolCalls.unscopedCandidates.add(state);
+                        if (candidates) {
+                          state.unindexed = false;
+                          state.candidates.add(candidates);
+                          candidates.states.add(state);
+                          candidates.unique = candidates.states.size === 1 ? state : undefined;
+                          if (state.complete && state.id) candidates.complete.add(state);
+                        }
                       }
 
                       const wasComplete = state.complete;
@@ -762,8 +789,8 @@ export function streamQoder(
                         state.block = { type: "toolCall", id: state.id, name: state.name, arguments: {} };
                         state.contentIndex = output.content.length;
                         output.content.push(state.block);
-                        toolStatesByBlock.set(state.block, state);
-                        lastToolState = state;
+                        toolCalls.statesByBlock.set(state.block, state);
+                        toolCalls.lastToolState = state;
                         stream.push({ type: "toolcall_start", contentIndex: state.contentIndex, partial: output });
                         // Argument-only provisional fragments have no content
                         // position until this block exists. Replay them in order.
@@ -776,8 +803,8 @@ export function streamQoder(
                           });
                         }
                       } else if (state.block) {
-                        state.block.id = state.id;
-                        state.block.name = state.name;
+                        if (newlyIdentified) state.block.id = state.id;
+                        if (newlyNamed) state.block.name = state.name;
                         if (argDelta) {
                           stream.push({
                             type: "toolcall_delta",
@@ -822,7 +849,7 @@ export function streamQoder(
 
       if (thinkingParser) {
         thinkingParser.finalize();
-        refreshToolIndexes();
+        if (toolCalls?.lastToolState) refreshToolIndexes(output, toolCalls);
       }
 
       if (thinkingBlockIndex !== -1) {
@@ -835,27 +862,29 @@ export function streamQoder(
         });
       }
 
-      // Validate the whole batch before publishing any successful end event.
-      for (const state of toolCallsState) {
-        if (!state.id || !state.name) {
-          throw new Error(`Unresolved tool-call identity (characters=${state.argumentLength})`);
+      if (toolCalls) {
+        // Validate the whole batch before publishing any successful end event.
+        for (const state of toolCalls.states) {
+          if (!state.id || !state.name) {
+            throw new Error(`Unresolved tool-call identity (characters=${state.argumentLength})`);
+          }
+          parseToolArguments(state);
         }
-        parseToolArguments(state);
-      }
-      // Map insertion order is the order calls first became identifiable,
-      // independent of sparse/reused upstream indexes and provisional buffers.
-      for (const [block, state] of toolStatesByBlock) {
-        block.arguments = parseToolArguments(state);
-        stream.push({
-          type: "toolcall_end",
-          contentIndex: state.contentIndex,
-          toolCall: block,
-          partial: output,
-        });
-      }
+        // Map insertion order is the order calls first became identifiable,
+        // independent of sparse/reused upstream indexes and provisional buffers.
+        for (const [block, state] of toolCalls.statesByBlock) {
+          block.arguments = parseToolArguments(state);
+          stream.push({
+            type: "toolcall_end",
+            contentIndex: state.contentIndex,
+            toolCall: block,
+            partial: output,
+          });
+        }
 
-      if (toolStatesByBlock.size > 0 && output.stopReason !== "length") {
-        output.stopReason = "toolUse";
+        if (toolCalls.statesByBlock.size > 0 && output.stopReason !== "length") {
+          output.stopReason = "toolUse";
+        }
       }
       // A turn the gateway stripped the tool call out of has no text and no tool
       // call, so `stop` reads as a finished task: the agent loop ends the turn
