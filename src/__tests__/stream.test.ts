@@ -645,6 +645,26 @@ describe("resolveRequestContext", () => {
     expect(resolved.tools.map((t) => t.name)).toEqual(["bash"]);
   });
 
+  it("keeps flat Context tools when the host exports the toolkit but passes a flat Context (omp 18.12.x)", () => {
+    // omp 18.12.3 exports the whole transcript toolkit to legacy extensions yet
+    // still calls `stream` with `systemPrompt` / `tools` unfolded. Replaying that
+    // transcript finds no system message, so the resolver must use the flat
+    // fields instead of shipping `tools: []` (the model then invents DSML text
+    // markup and every turn ends empty).
+    const resolved = resolveRequestContext(PiAi, flatContext);
+    expect(resolved.systemText).toBe("legacy prompt");
+    expect(resolved.tools.map((t) => t.name)).toEqual(["bash"]);
+    expect(resolved.messages).toBe(flatContext.messages);
+  });
+
+  it("keeps the flat prompt when a flat Context carries no tools", () => {
+    const noTools = { ...flatContext, tools: [] } as unknown as Context;
+    const resolved = resolveRequestContext(PiAi, noTools);
+    expect(resolved.systemText).toBe("legacy prompt");
+    expect(resolved.tools).toEqual([]);
+    expect(resolved.messages).toBe(noTools.messages);
+  });
+
   it("resolves tools + prompt from the transcript when helpers are present (pi-ai >=0.86)", () => {
     const transcript = PiAi.normalizeContext({
       systemPrompt: "you are helpful",

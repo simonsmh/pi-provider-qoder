@@ -115,11 +115,17 @@ type TranscriptHelpers = Partial<
  *    message, because Qoder ignores the top-level `system` field).
  *  - pi-ai <=0.85 hands providers a flat `Context` with top-level
  *    `systemPrompt` / `tools` and no transcript helpers.
+ *  - Some >=0.86 hosts hand providers a flat `Context` anyway while still
+ *    exporting the transcript toolkit to legacy extensions (omp 18.12.x does:
+ *    its compat root exports the helpers, but `streamQoder` receives
+ *    `systemPrompt` + `tools` unfolded). The leading system message is what
+ *    marks a folded transcript, so its absence means the flat fields still
+ *    carry the prompt and tools.
  *
  * The helpers are passed in (as the pi-ai namespace) and feature-detected, so a
- * single bundle runs on both: on 0.85 the namespace simply lacks them and we use
- * the flat fields. Using a namespace import for this is deliberate — a named
- * import of a 0.86-only export would throw at module-load time on 0.85.
+ * single bundle runs on all three: on 0.85 the namespace simply lacks them and
+ * we use the flat fields. Using a namespace import for this is deliberate — a
+ * named import of a 0.86-only export would throw at module-load time on 0.85.
  */
 export function resolveRequestContext(
   piAi: TranscriptHelpers,
@@ -158,10 +164,22 @@ export function resolveRequestContext(
   const collapsed = collapseSystemMessages(context as unknown as TranscriptContext);
   const transcriptMessages = collapsed.messages;
   const initialSystem = getInitialSystemMessage(transcriptMessages);
+
+  // The leading system message is the only proof that this host folded
+  // `systemPrompt` and `tools` into the transcript. Without it the helpers
+  // replay nothing — `getCurrentTools` reads `toolsAdded` off system messages —
+  // so a host that exports the toolkit but still passes a flat `Context` would
+  // otherwise send `tools: []` and lose the tool-call protocol entirely.
+  if (!initialSystem) {
+    return {
+      messages: context.messages,
+      systemText: contentToText(context.systemPrompt || ""),
+      tools: context.tools ?? [],
+    };
+  }
+
   const tools = getCurrentTools(transcriptMessages);
-  const systemText = contentToText(
-    initialSystem && getSystemMessageText ? getSystemMessageText(initialSystem) : context.systemPrompt || "",
-  );
+  const systemText = contentToText(getSystemMessageText?.(initialSystem) ?? context.systemPrompt ?? "");
   const messages = withoutInitialSystemMessage(transcriptMessages);
   return { messages, systemText, tools };
 }
