@@ -910,6 +910,97 @@ describe("streamQoder response aggregation contract", () => {
     failure(await run([{ tool_calls: [tool(0, a.id, a.name, '{"path":')] }], "length"), /json|argument|incomplete/i);
   });
 
+  it("C12 C05 initializes provisional arguments after empty placeholders and tag thinking", async () => {
+    const result = await run([
+      { tool_calls: [tool(0)] },
+      { content: "<thinking>initial thought</thinking>ready" },
+      { tool_calls: [tool(0, undefined, undefined, '{"path":')] },
+      { tool_calls: [tool(0, a.id, a.name, '"/a"}')] },
+    ]);
+    success(result, [a]);
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.message.content.filter((block) => block.type !== "toolCall")).toEqual([
+      { type: "thinking", thinking: "initial thought" },
+      { type: "text", text: "ready" },
+    ]);
+    const deltas = result.snapshots.filter((event) => event.type === "toolcall_delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe('{"path":"/a"}');
+  });
+
+  it("C12 C06 rejects unresolved argument-only state after an empty placeholder", async () => {
+    const result = await run([{ tool_calls: [tool(0)] }, { tool_calls: [tool(0, undefined, undefined, "{}")] }]);
+    failure(result, /identity|unresolved|missing.*id/i);
+    expect(
+      result.snapshots.filter((event) => event.type === "toolcall_start" || event.type === "toolcall_delta"),
+    ).toEqual([]);
+  });
+
+  it("C07 C02 restores a unique index candidate after retiring completed interleaved calls", async () => {
+    const c = { id: "synthetic_c", name: "lookup", arguments: { path: "/c" } };
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":'), tool(0, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(0, a.id, undefined, '"/a"}'), tool(0, b.id, undefined, '"/b"}')] },
+        { tool_calls: [tool(0, c.id, c.name, '{"path":')] },
+        { tool_calls: [tool(0, undefined, undefined, '"/c"}')] },
+      ]),
+      [a, b, c],
+    );
+  });
+
+  it("C04 C09 re-registers a retired ID before subsequent index and global continuations", async () => {
+    const c = { id: "synthetic_c", name: "lookup", arguments: { path: "/c" } };
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":"/a"}')] },
+        { tool_calls: [tool(0, b.id, b.name, '{"path":"/b"}')] },
+        { tool_calls: [tool(0, a.id, undefined, " ")] },
+        { tool_calls: [tool(0, c.id, c.name, '{"path":')] },
+        { tool_calls: [tool(0, undefined, undefined, '"/c"}')] },
+        { tool_calls: [tool(undefined, undefined, undefined, "\n")] },
+      ]),
+      [a, b, c],
+    );
+  });
+
+  it("C05 C02 retires an already-closed provisional after its ID arrives", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, undefined, undefined, '{"path":"/a"}')] },
+        { tool_calls: [tool(0, a.id, a.name)] },
+        { tool_calls: [tool(0, b.id, b.name, '{"path":')] },
+        { tool_calls: [tool(0, undefined, undefined, '"/b"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it("C04 C05 binds a provisional uniquely after retiring a completed alias from its index", async () => {
+    success(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, '{"path":"/a"}')] },
+        { tool_calls: [tool(1, undefined, undefined, '{"path":')] },
+        { tool_calls: [tool(1, a.id, undefined, " ")] },
+        { tool_calls: [tool(1, b.id, b.name)] },
+        { tool_calls: [tool(1, undefined, undefined, '"/b"}')] },
+      ]),
+      [a, b],
+    );
+  });
+
+  it("C04 C09 keeps a globally reactivated retired ID in ambiguity checks", async () => {
+    failure(
+      await run([
+        { tool_calls: [tool(0, a.id, a.name, "{}")] },
+        { tool_calls: [tool(0, b.id, b.name, "{}")] },
+        { tool_calls: [tool(undefined, a.id, undefined, " ")] },
+        { tool_calls: [tool(0, "synthetic_c", "lookup", "{}")] },
+        { tool_calls: [tool(undefined, undefined, undefined, " ")] },
+      ]),
+      /ambiguous tool-call continuation/i,
+    );
+  });
+
   it("C15 aborts an in-progress tool response and releases its reader", async () => {
     const controller = new AbortController();
     let cancelled = false;
