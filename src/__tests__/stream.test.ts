@@ -636,16 +636,17 @@ describe("streamQoder response aggregation contract", () => {
       return push.call(this, event);
     });
     const frames = [...deltas.map((delta) => sseEnvelope(chunk(delta))), sseEnvelope(finishChunk(finish)), DONE_SSE];
-    const bytes = new TextEncoder().encode(frames.join(""));
+    const encoder = new TextEncoder();
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         if (byteSize) {
+          const bytes = encoder.encode(frames.join(""));
           for (let offset = 0; offset < bytes.length; offset += byteSize) {
             controller.enqueue(bytes.slice(offset, offset + byteSize));
           }
         } else {
-          for (const frame of frames) controller.enqueue(new TextEncoder().encode(frame));
+          for (const frame of frames) controller.enqueue(encoder.encode(frame));
         }
         // Leave open: DONE and all error paths must release the reader.
       },
