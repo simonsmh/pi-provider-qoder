@@ -53,5 +53,8 @@
   "bugs": {
     "url": "https://github.com/simonsmh/pi-provider-qoder/issues"
   },
-  "homepage": "https://github.com/simonsmh/pi-provider-qoder#readme"
+  "homepage": "https://github.com/simonsmh/pi-provider-qoder#readme",
+  "overrides": {
+    "undici": "8.12.2"
+  }
 }
