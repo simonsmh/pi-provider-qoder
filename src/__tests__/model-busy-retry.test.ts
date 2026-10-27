@@ -61,7 +61,15 @@ function finishChunk(finishReason: string): object {
 
 /** The exact three-layer nesting Qoder returns for a busy model. */
 function busyBody(
-  options: { retryAfterSeconds?: unknown; isQueued?: unknown; serviceAvailable?: unknown; code?: string } = {},
+  options: {
+    retryAfterSeconds?: unknown;
+    isQueued?: unknown;
+    serviceAvailable?: unknown;
+    code?: string;
+    waitTime?: unknown;
+    queueCount?: unknown;
+    queueType?: unknown;
+  } = {},
 ): string {
   const retryAfterSeconds = "retryAfterSeconds" in options ? options.retryAfterSeconds : 2;
   // Absent keys are meaningful: a snapshot missing isQueued is not "ready".
@@ -71,11 +79,11 @@ function busyBody(
   const queue = JSON.stringify({
     isQueued,
     modelKey: "ultimate",
-    queueCount: 0,
-    queueType: "p4",
+    queueCount: "queueCount" in options ? options.queueCount : 0,
+    queueType: "queueType" in options ? options.queueType : "p4",
     retryAfterSeconds,
     serviceAvailable,
-    waitTime: 0,
+    waitTime: "waitTime" in options ? options.waitTime : 0,
   });
   return JSON.stringify({
     code: "403",
@@ -161,11 +169,37 @@ function decodeRequestBody(init: RequestInit | undefined): Record<string, unknow
 
 describe("parseModelBusyRejection", () => {
   it("reads the retry hint out of the real nested envelope body", () => {
-    expect(parseModelBusyRejection(busyBody({ retryAfterSeconds: 2 }))).toEqual({ retryAfterMs: 2000 });
+    expect(parseModelBusyRejection(busyBody({ retryAfterSeconds: 2 }))).toEqual({
+      kind: "ready",
+      retryAfterMs: 2000,
+    });
   });
 
-  it("rejects a real queue instead of treating it as ready", () => {
-    expect(parseModelBusyRejection(busyBody({ isQueued: true }))).toBeUndefined();
+  it("returns a queued snapshot preferring waitTime over retryAfterSeconds", () => {
+    expect(
+      parseModelBusyRejection(
+        busyBody({ isQueued: true, waitTime: 367, retryAfterSeconds: 30, queueCount: 454, queueType: "p2" }),
+      ),
+    ).toEqual({ kind: "queued", waitMs: 367000, queueCount: 454, queueType: "p2" });
+  });
+
+  it("falls back to retryAfterSeconds when a queued snapshot has no usable waitTime", () => {
+    expect(parseModelBusyRejection(busyBody({ isQueued: true, retryAfterSeconds: 30 }))).toEqual({
+      kind: "queued",
+      waitMs: 30000,
+      queueCount: 0,
+      queueType: "p4",
+    });
+    expect(parseModelBusyRejection(busyBody({ isQueued: true, waitTime: "367", retryAfterSeconds: 30 }))).toEqual({
+      kind: "queued",
+      waitMs: 30000,
+      queueCount: 0,
+      queueType: "p4",
+    });
+  });
+
+  it("rejects a queued snapshot without the service flags", () => {
+    expect(parseModelBusyRejection(busyBody({ isQueued: true, serviceAvailable: undefined }))).toBeUndefined();
   });
 
   it("rejects a snapshot without the ready flags", () => {
@@ -179,7 +213,10 @@ describe("parseModelBusyRejection", () => {
 
   it("falls back to an immediate retry for invalid retry hints", () => {
     for (const invalid of [-1, 0, "2", Number.NaN, null]) {
-      expect(parseModelBusyRejection(busyBody({ retryAfterSeconds: invalid }))).toEqual({ retryAfterMs: 0 });
+      expect(parseModelBusyRejection(busyBody({ retryAfterSeconds: invalid }))).toEqual({
+        kind: "ready",
+        retryAfterMs: 0,
+      });
     }
   });
 
@@ -312,13 +349,22 @@ describe("streamQoder model-busy recovery", () => {
     expect(errorOf(events).errorMessage).toMatch(/attempts=3/);
   });
 
-  it("keeps the previous behavior for a real queue", async () => {
-    globalThis.fetch = mockFetchSequence([busySse({ isQueued: true }), SUCCESS_SSE]);
+  it("surfaces a real queue as a host-schedulable error instead of a bare 403", async () => {
+    globalThis.fetch = mockFetchSequence([
+      busySse({ isQueued: true, waitTime: 367, retryAfterSeconds: 30, queueCount: 454, queueType: "p2" }),
+      SUCCESS_SSE,
+    ]);
     const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake" }));
     const message = errorOf(events);
 
+    // Not retried in-line: the wait belongs to the host's retry policy.
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
-    expect(message.errorMessage).toMatch(/Upstream status 403/);
+    expect(message.errorMessage).toMatch(/request queued/);
+    expect(message.errorMessage).toMatch(/454 ahead/);
+    expect(message.errorMessage).toMatch(/p2/);
+    expect(message.errorMessage).toMatch(/retry-after-ms=367000/);
+    expect(message.errorMessage).not.toMatch(/403/);
+    expect(isRetryableAssistantError(message)).toBe(true);
   });
 
   it("keeps the previous behavior when only subCode matches", async () => {

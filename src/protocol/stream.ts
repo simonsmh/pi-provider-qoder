@@ -29,6 +29,13 @@ import { transformMessagesForQoder, transformTools } from "./transform.js";
  * client treats `isQueued:false` + `serviceAvailable:true` as "ready" and
  * re-sends the request after `retryAfterSeconds`; without that recovery one
  * transient rejection kills the whole turn. We mirror the bounded part of it.
+ *
+ * A real queue (`isQueued:true`) is NOT retried in-line: the wait can be
+ * minutes, and sleeping inside the stream would block the turn under the
+ * host's abort and retry policy. Instead the queued rejection is surfaced
+ * as a host-schedulable error carrying the queue fields and a
+ * `retry-after-ms=` hint, with no bare `403` in the text (a bare 403 is
+ * classified as an auth failure by the host and never retried).
  */
 const MODEL_BUSY_CODE = "10605";
 const DEFAULT_MODEL_BUSY_RETRIES = 2;
@@ -47,9 +54,14 @@ class QoderModelBusyError extends Error {
   }
 }
 
-interface ModelBusyQueueSnapshot {
-  retryAfterMs?: number;
-}
+type ModelBusyQueueSnapshot =
+  | { kind: "ready"; retryAfterMs?: number }
+  | {
+      kind: "queued";
+      waitMs: number;
+      queueCount?: number;
+      queueType?: string;
+    };
 
 /** Parse `unknown | JSON string` layers until an object is found (bounded). */
 function parseJsonObject(value: unknown, depth = 0): Record<string, unknown> | undefined {
@@ -72,10 +84,19 @@ function parseJsonObject(value: unknown, depth = 0): Record<string, unknown> | u
  * Envelope body shape (three nested JSON layers):
  *   {code:"403",message:"{\"code\":\"10605\",\"message\":\"{\\\"isQueued\\\":false,...}\",\"subCode\":\"RESOURCE_LIMIT\"}"}
  *
- * Only the documented 10605 code and the observed ready combination
- * (`isQueued:false` + `serviceAvailable:true`) are eligible. A real queue
- * (`isQueued:true`), missing flags, or any other code keep the previous
- * failure behavior. `subCode` is diagnostic only — it is not a retry signal.
+ * Only the documented 10605 code with `serviceAvailable:true` is eligible.
+ * `subCode` is diagnostic only — it is not a retry signal.
+ *
+ * - `isQueued:false` ("ready"): the caller may re-send after
+ *   `retryAfterSeconds`; the stream loop retries this in-line, bounded.
+ * - `isQueued:true` ("queued"): the request sits in a real queue. The
+ *   snapshot carries the wait hint, preferring `waitTime` (seconds until
+ *   this request's slot) over `retryAfterSeconds` (a minimum re-ask
+ *   interval); re-asking at the shorter interval would land at the back
+ *   of the queue. The stream loop does NOT sleep on this — it surfaces
+ *   a host-schedulable error instead.
+ * - Missing flags or any other code: not a busy signal, keep the
+ *   previous failure behavior.
  */
 export function parseModelBusyRejection(body: unknown): ModelBusyQueueSnapshot | undefined {
   const outer = parseJsonObject(body);
@@ -83,11 +104,37 @@ export function parseModelBusyRejection(body: unknown): ModelBusyQueueSnapshot |
   if (busy?.code !== MODEL_BUSY_CODE) return undefined;
   const queue = parseJsonObject(busy.message);
   if (!queue) return undefined;
-  if (queue.isQueued !== false || queue.serviceAvailable !== true) return undefined;
-  const seconds = queue.retryAfterSeconds;
-  const retryAfterMs =
-    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0;
-  return { retryAfterMs };
+  if (queue.serviceAvailable !== true) return undefined;
+  const seconds = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value * 1000) : 0;
+  if (queue.isQueued === false) {
+    return { kind: "ready", retryAfterMs: seconds(queue.retryAfterSeconds) };
+  }
+  if (queue.isQueued === true) {
+    const waitMs = seconds(queue.waitTime) || seconds(queue.retryAfterSeconds);
+    const queueCount = typeof queue.queueCount === "number" ? queue.queueCount : undefined;
+    const queueType = typeof queue.queueType === "string" ? queue.queueType : undefined;
+    return { kind: "queued", waitMs, queueCount, queueType };
+  }
+  return undefined;
+}
+
+/**
+ * Format a queued rejection for the host's retry machinery. The text
+ * deliberately contains no bare `403` (hosts classify that as an auth
+ * failure and never retry), includes a `retry-after-ms=` hint the host
+ * can schedule on, and stays retryable under pi-ai's retryable pattern
+ * via the truthful "rate limit" token (the queue is a CALL_COUNT_LIMIT
+ * throttle). Queue fields are included so a queued failure is
+ * distinguishable from an auth failure in logs and transcripts.
+ */
+export function formatQueuedBusyError(snapshot: Extract<ModelBusyQueueSnapshot, { kind: "queued" }>): Error {
+  const waitSeconds = Math.round(snapshot.waitMs / 1000);
+  const ahead = snapshot.queueCount !== undefined ? `, ${snapshot.queueCount} ahead` : "";
+  const tier = snapshot.queueType ? ` (${snapshot.queueType})` : "";
+  return new Error(
+    `Qoder model is busy: request queued (10605 CALL_COUNT_LIMIT${tier}${ahead}, ~${waitSeconds}s wait, rate limit, retry-after-ms=${snapshot.waitMs})`,
+  );
 }
 
 /** Sleep that rejects as soon as the caller aborts. */
@@ -757,12 +804,21 @@ export function streamQoder(
                 const envelope = JSON.parse(dataStr);
                 if (envelope.statusCodeValue && envelope.statusCodeValue !== 200) {
                   const busy = parseModelBusyRejection(envelope.body);
-                  if (busy) {
+                  if (busy?.kind === "ready") {
                     throw new QoderModelBusyError(
                       `Upstream status ${envelope.statusCodeValue}: ${envelope.body}`,
                       busy.retryAfterMs,
                       sawModelOutput,
                     );
+                  }
+                  if (busy?.kind === "queued") {
+                    // A queued rejection that arrives after partial output
+                    // must not be host-retried: re-running the turn would
+                    // duplicate the content already emitted.
+                    if (sawModelOutput) {
+                      throw new Error("Qoder model rejected the request after partial output (10605 RESOURCE_LIMIT)");
+                    }
+                    throw formatQueuedBusyError(busy);
                   }
                   throw new Error(`Upstream status ${envelope.statusCodeValue}: ${envelope.body}`);
                 }
