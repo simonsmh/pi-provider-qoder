@@ -105,8 +105,11 @@ export function parseModelBusyRejection(body: unknown): ModelBusyQueueSnapshot |
   const queue = parseJsonObject(busy.message);
   if (!queue) return undefined;
   if (queue.serviceAvailable !== true) return undefined;
-  const seconds = (value: unknown): number =>
-    typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value * 1000) : 0;
+  const seconds = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+    const milliseconds = Math.round(value * 1000);
+    return Number.isSafeInteger(milliseconds) && milliseconds > 0 ? milliseconds : 0;
+  };
   if (queue.isQueued === false) {
     return { kind: "ready", retryAfterMs: seconds(queue.retryAfterSeconds) };
   }

@@ -198,6 +198,18 @@ describe("parseModelBusyRejection", () => {
     });
   });
 
+  it.each([1e300, Number.MAX_VALUE, Number.MAX_SAFE_INTEGER])(
+    "uses retryAfterSeconds when queue waitTime=%s exceeds safe milliseconds",
+    (waitTime) => {
+      expect(parseModelBusyRejection(busyBody({ isQueued: true, waitTime, retryAfterSeconds: 30 }))).toEqual({
+        kind: "queued",
+        waitMs: 30000,
+        queueCount: 0,
+        queueType: "p4",
+      });
+    },
+  );
+
   it("rejects a queued snapshot without the service flags", () => {
     expect(parseModelBusyRejection(busyBody({ isQueued: true, serviceAvailable: undefined }))).toBeUndefined();
   });
