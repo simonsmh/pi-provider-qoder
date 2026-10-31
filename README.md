@@ -119,6 +119,16 @@ already-selected model, run `/qoder-usage`; otherwise the next supported lifecyc
 rechecks identity. No account quota is written to disk. Per-request Credits are stored
 with the assistant usage in the host's session log.
 
+### `omp usage`
+
+OMP's built-in usage view reads a provider-level `usage` slot, so a logged-in Qoder
+account appears there with the same account quota: one row per Credit bucket (user,
+add-on, organization), the numeric used/limit/remaining amounts, the plan expiry when
+one exists, and the account kind. The read reuses the quota endpoint behind
+`/qoder-usage` and is account-wide; a failed quota read shows as missing data and never
+marks the credential unhealthy. pi has no such slot, so there `/qoder-usage` remains the
+quota view.
+
 ### Offline visual preview
 
 ```bash
