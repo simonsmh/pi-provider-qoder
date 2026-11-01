@@ -9,6 +9,7 @@ import {
   getQoderUsageURL,
   getQoderUserInfoURL,
   QODER_MODES,
+  setQoderChatBaseUrl,
 } from "../region.js";
 
 describe("Qoder regions", () => {
@@ -36,5 +37,16 @@ describe("Qoder regions", () => {
     expect(getQoderUserInfoURL("cn")).toBe("https://openapi.qoder.com.cn/api/v1/userinfo");
     expect(getQoderUsageURL("cn")).toBe("https://openapi.qoder.com.cn/api/v2/quota/usage");
     expect(getQoderRefreshURL("cn")).toBe("https://gateway.qoder.com.cn/algo/api/v3/user/refresh_token");
+  });
+
+  it("routes only chat through the resolved chat node", () => {
+    setQoderChatBaseUrl("global", "https://api2.qoder.sh");
+    expect(getQoderChatURL("global")).toContain(
+      "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation",
+    );
+    expect(getQoderModelListURL("global")).toBe("https://api3.qoder.sh/algo/api/v2/model/list?Encode=1");
+
+    setQoderChatBaseUrl("global", undefined);
+    expect(getQoderChatURL("global")).toContain("https://api3.qoder.sh/algo/api/v2/service/pro/sse");
   });
 });
