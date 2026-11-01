@@ -34,6 +34,12 @@ function stubNetworkFailure(): void {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 500 })));
 }
 
+// Registration imports the full pi-ai compat layer; under parallel workers
+// that can push these tests past vitest's 5s default, and a timeout here
+// also lets the late registration pollute the next test's registry counts.
+// Give this file room.
+vi.setConfig({ testTimeout: 30_000 });
+
 function liteModel(provider: "qoder" | "qoder-cn") {
   return {
     id: "Lite",

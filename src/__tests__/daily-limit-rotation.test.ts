@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Api, AssistantMessageEvent, AssistantMessageEventStream, Context, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { clearQoderEndpointsCache, getCachedChatBaseUrl } from "../endpoints.js";
 import { streamQoder } from "../protocol/stream.js";
 import { clearQoderChatBaseUrlOverrides, getQoderChatBaseUrl } from "../region.js";
@@ -55,6 +58,16 @@ async function consume(stream: AssistantMessageEventStream): Promise<AssistantMe
   return events;
 }
 
+// Keep the endpoints cache off the real HOME file: the rotation persists the
+// serving node into it, and parallel test files would otherwise race on it.
+const originalCachePath = process.env.QODER_ENDPOINTS_CACHE_PATH;
+process.env.QODER_ENDPOINTS_CACHE_PATH = join(mkdtempSync(join(tmpdir(), "qoder-endpoints-test-")), "cache.json");
+
+afterAll(() => {
+  if (originalCachePath === undefined) delete process.env.QODER_ENDPOINTS_CACHE_PATH;
+  else process.env.QODER_ENDPOINTS_CACHE_PATH = originalCachePath;
+});
+
 describe("daily chat limit recovery", () => {
   const originalFetch = globalThis.fetch;
 
@@ -80,6 +93,40 @@ describe("daily chat limit recovery", () => {
       }
       if (url.startsWith("https://api3.qoder.sh/")) {
         return new Response(DAILY_LIMIT_SSE, { status: 200 });
+      }
+      if (url.startsWith("https://api2.qoder.sh/")) {
+        return new Response(SUCCESS_SSE, { status: 200 });
+      }
+      return new Response("unexpected url", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const events = await consume(streamQoder(makeModel(), makeContext(), { apiKey: "fake" }));
+
+    expect(events.some((ev) => ev.type === "error")).toBe(false);
+    const chatCalls = calls.filter((url) => url.includes("agent_chat_generation"));
+    expect(chatCalls[0]?.startsWith("https://api3.qoder.sh/")).toBe(true);
+    expect(chatCalls[1]?.startsWith("https://api2.qoder.sh/")).toBe(true);
+    expect(getQoderChatBaseUrl("global")).toBe("https://api2.qoder.sh/");
+    expect(getCachedChatBaseUrl("global")).toBe("https://api2.qoder.sh/");
+  });
+
+  it("also rotates when the 110 rejection arrives as a plain HTTP error", async () => {
+    const endpointsFixture = JSON.parse(
+      await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../__fixtures__/region-endpoints.json", import.meta.url), "utf8"),
+      ),
+    ) as { encoded: string };
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      if (url.includes("/service/region/endpoints")) {
+        return new Response(endpointsFixture.encoded, { status: 200 });
+      }
+      if (url.startsWith("https://api3.qoder.sh/")) {
+        return new Response(JSON.stringify({ code: "110", message: "Billing daily count exceeded" }), {
+          status: 403,
+        });
       }
       if (url.startsWith("https://api2.qoder.sh/")) {
         return new Response(SUCCESS_SSE, { status: 200 });

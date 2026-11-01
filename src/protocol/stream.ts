@@ -781,6 +781,13 @@ export function streamQoder(
 
         if (!response.ok) {
           const errText = await response.text();
+          if (isDailyChatLimitRejection(errText)) {
+            // The same 110 rejection can also arrive as a plain HTTP error
+            // instead of an SSE envelope; rotate nodes for it the same way.
+            // The response headers just arrived, so no model output has been
+            // seen yet and the retry is safe.
+            throw new QoderDailyChatLimitError(`Upstream status ${response.status}: ${errText}`, false);
+          }
           throw new Error(`Qoder API request failed: ${response.status} ${response.statusText}. Response: ${errText}`);
         }
 

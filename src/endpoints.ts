@@ -62,7 +62,9 @@ function getHomeDir(): string {
 }
 
 function getCachePath(): string {
-  return join(getHomeDir(), ".pi", "agent", "qoder-endpoints-cache.json");
+  // Overridable so tests never touch the user's real cache file: the cache
+  // tests and the stream tests otherwise race on it when run in parallel.
+  return process.env.QODER_ENDPOINTS_CACHE_PATH || join(getHomeDir(), ".pi", "agent", "qoder-endpoints-cache.json");
 }
 
 function normalizeBaseUrl(url: string): string | undefined {

@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyCachedChatEndpoint,
   chatEndpointCandidates,
@@ -26,6 +28,17 @@ const credentials = {
   email: "user@example.com",
   machineID: "machine-id",
 };
+
+// Keep the endpoints cache off the real HOME file: these tests write it on
+// every run, and parallel test files would otherwise race on it (and pollute
+// the user's own cache).
+const originalCachePath = process.env.QODER_ENDPOINTS_CACHE_PATH;
+process.env.QODER_ENDPOINTS_CACHE_PATH = join(mkdtempSync(join(tmpdir(), "qoder-endpoints-test-")), "cache.json");
+
+afterAll(() => {
+  if (originalCachePath === undefined) delete process.env.QODER_ENDPOINTS_CACHE_PATH;
+  else process.env.QODER_ENDPOINTS_CACHE_PATH = originalCachePath;
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
