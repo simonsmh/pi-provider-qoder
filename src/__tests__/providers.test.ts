@@ -22,6 +22,18 @@ afterEach(() => {
   vi.resetModules();
 });
 
+/**
+ * Keep the startup catalog refresh off the real network. With stored
+ * credentials on disk and a stale cache, registerProviders fetches Qoder's
+ * catalog; in a sandbox without direct egress that fetch hangs until the
+ * test times out, and the late completion then pollutes the next test's
+ * registration counts. A failing response makes the refresh return early
+ * (registerProviders already tolerates refresh failures).
+ */
+function stubNetworkFailure(): void {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 500 })));
+}
+
 function liteModel(provider: "qoder" | "qoder-cn") {
   return {
     id: "Lite",
@@ -40,6 +52,7 @@ function liteModel(provider: "qoder" | "qoder-cn") {
 describe("provider region binding", () => {
   it("binds qoder to global and qoder-cn to CN", async () => {
     for (const name of patEnvNames) delete process.env[name];
+    stubNetworkFailure();
     const providers = new Map<string, Record<string, unknown>>();
     const pi = {
       registerProvider(providerID: string, config: Record<string, unknown>) {
@@ -88,6 +101,7 @@ describe("provider region binding", () => {
 describe("qoder-api registry", () => {
   it("registers qoder-api so global streamSimple works for both regions", async () => {
     for (const name of patEnvNames) delete process.env[name];
+    stubNetworkFailure();
 
     const actual = await vi.importActual<typeof import("@earendil-works/pi-ai/compat")>("@earendil-works/pi-ai/compat");
     const registerSpy = vi.fn((...args: Parameters<typeof actual.registerApiProvider>) => {
@@ -141,6 +155,7 @@ describe("qoder-api registry", () => {
 
   it("still registers providers when registerApiProvider is absent (OMP-style)", async () => {
     for (const name of patEnvNames) delete process.env[name];
+    stubNetworkFailure();
 
     vi.doMock("@earendil-works/pi-ai/compat", () => ({
       // OMP bundled pi-ai/compat does not export registerApiProvider.
