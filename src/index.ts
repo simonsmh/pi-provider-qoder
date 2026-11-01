@@ -11,6 +11,7 @@ import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQode
 import { registerQoderCreditDisplay } from "./credit-display.js";
 import { streamQoder } from "./protocol/stream.js";
 import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } from "./region.js";
+import { createQoderUsageProvider, type UsageProvider } from "./usage-provider.js";
 
 // pi supports a `fetchUsage` hook on the oauth config at runtime, but it is not
 // part of the published ProviderConfig type. Declare the extension locally.
@@ -64,7 +65,9 @@ function createQoderOAuth(mode: QoderMode): OAuthConfigWithUsage {
 function registerQoderProvider(pi: ExtensionAPI, mode: QoderMode): void {
   const providerID = getQoderRegionConfig(mode).providerID;
   const oauth = createQoderOAuth(mode);
-  pi.registerProvider(providerID, {
+  // `usage` is OMP's slot for `omp usage`; pi's published ProviderConfig has no
+  // such field, so the registered object is widened locally. pi ignores the key.
+  const config: ProviderConfig & { usage?: UsageProvider } = {
     baseUrl: getQoderBaseUrl(mode),
     api: QODER_API,
     models: modelsForProvider(mode, providerID) as unknown as ProviderConfig["models"],
@@ -72,7 +75,9 @@ function registerQoderProvider(pi: ExtensionAPI, mode: QoderMode): void {
     // pi-coding-agent resolves its own nested @earendil-works/pi-ai copy, so the
     // structurally identical Model/Context types are nominally distinct here.
     streamSimple: streamQoder as unknown as ProviderConfig["streamSimple"],
-  });
+    usage: createQoderUsageProvider(mode, providerID),
+  };
+  pi.registerProvider(providerID, config);
 }
 
 async function refreshModelsAtStartup(mode: QoderMode): Promise<void> {
