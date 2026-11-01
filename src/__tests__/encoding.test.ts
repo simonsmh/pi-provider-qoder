@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { qoderEncodeBody } from "../protocol/encoding.js";
+import { qoderDecodeBody, qoderEncodeBody } from "../protocol/encoding.js";
 
 /** Reference encoder matching the pre-Buffer string implementation (byte-identical). */
 function qoderEncodeBodyLegacyString(plaintext: string | Buffer): string {
@@ -102,5 +103,38 @@ describe("qoderEncodeBody", () => {
       const legacy = qoderEncodeBodyLegacyString(sample);
       expect(next).toBe(legacy);
     }
+  });
+});
+
+describe("qoderDecodeBody", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("../__fixtures__/region-endpoints.json", import.meta.url), "utf8"),
+  ) as { encoded: string; plaintext: string };
+
+  it("decodes a captured region/endpoints response", () => {
+    expect(qoderDecodeBody(fixture.encoded)).toBe(fixture.plaintext);
+  });
+
+  it("is the inverse of qoderEncodeBody", () => {
+    const samples = [
+      "",
+      "a",
+      "hello",
+      JSON.stringify({ messages: [{ role: "user", content: "hi" }], n: 1 }),
+      JSON.stringify({ nodes: ["https://api2.qoder.sh"], nested: { ok: true } }),
+    ];
+    for (const sample of samples) {
+      expect(qoderDecodeBody(qoderEncodeBody(sample))).toBe(sample);
+    }
+  });
+
+  it("round-trips non-ASCII payloads", () => {
+    const sample = JSON.stringify({ name: "毛定璇（璇极）", note: "端点" });
+    expect(qoderDecodeBody(qoderEncodeBody(sample))).toBe(sample);
+  });
+
+  it("returns an empty string for empty input", () => {
+    expect(qoderDecodeBody("")).toBe("");
+    expect(qoderDecodeBody(Buffer.alloc(0))).toBe("");
   });
 });

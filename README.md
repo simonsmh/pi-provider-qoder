@@ -56,6 +56,18 @@ Context uses the largest live catalog option (often 1M). Output is 128K.
 | Usage | `https://openapi.qoder.sh/api/v2/quota/usage` | `https://openapi.qoder.com.cn/api/v2/quota/usage` |
 | Chat gateway | `https://api3.qoder.sh/` | `https://gateway.qoder.com.cn/` |
 
+Agent chat is not bound to the node in this table. At startup the extension asks
+`region/endpoints` for the account's node map and routes chat to the remote-agent node
+(`dataNodeMap.remote_agent`), which is the node Qoder's own CLI uses; the model catalog
+stays on the inference node. The resolved node is cached in
+`~/.pi/agent/qoder-endpoints-cache.json` for one hour.
+
+If a chat request is rejected with `403 code 110 "Billing daily count exceeded"`, the
+account has exhausted that node's daily chat allowance — Qoder counts it per node, so
+another node in the map can still serve the same account. The extension then switches to
+the next candidate (remote-agent, then inference, then security), retries, and persists
+whichever node served the request. Discovery failures fall back to the table above.
+
 ## Request and account Credits
 
 The footer shows **actual session deductions in Credits**, accumulated from Qoder's

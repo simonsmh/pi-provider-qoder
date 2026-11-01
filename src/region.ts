@@ -64,12 +64,37 @@ export function getQoderBaseUrl(mode: QoderMode): string {
   return getQoderRegionConfig(mode).baseUrl;
 }
 
+/**
+ * Chat traffic may be routed to a different node than the catalog. Qoder's
+ * own CLI resolves this per account (region/endpoints), and the node it picks
+ * does not always match `inferNodes`: using the infer node for agent chat
+ * returns `403 code 110 "Billing daily count exceeded"` for some accounts
+ * while the same account succeeds on the node the CLI selected.
+ */
+const chatBaseUrlOverrides = new Map<QoderMode, string>();
+
+export function getQoderChatBaseUrl(mode: QoderMode): string {
+  return chatBaseUrlOverrides.get(mode) ?? getQoderBaseUrl(mode);
+}
+
+export function setQoderChatBaseUrl(mode: QoderMode, url: string | undefined): void {
+  if (!url) {
+    chatBaseUrlOverrides.delete(mode);
+    return;
+  }
+  chatBaseUrlOverrides.set(mode, url.endsWith("/") ? url : `${url}/`);
+}
+
+export function clearQoderChatBaseUrlOverrides(): void {
+  chatBaseUrlOverrides.clear();
+}
+
 export function getQoderModelListURL(mode: QoderMode): string {
   return `${getQoderBaseUrl(mode)}algo/api/v2/model/list?Encode=1`;
 }
 
 export function getQoderChatURL(mode: QoderMode): string {
-  return `${getQoderBaseUrl(mode)}algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1`;
+  return `${getQoderChatBaseUrl(mode)}algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1`;
 }
 
 export function getQoderExchangeURL(mode: QoderMode): string {

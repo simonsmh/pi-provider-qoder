@@ -19,7 +19,8 @@ import { resolveQoderIdentity } from "../auth/oauth.js";
 import { getCachedModelConfig, MAX_OUTPUT_TOKENS } from "../catalog.js";
 import { buildAuthHeaders, getMachineId } from "../cosy.js";
 import { applyQoderCredits } from "../credits.js";
-import { getQoderChatURL, getQoderRegionConfig } from "../region.js";
+import { rememberChatBaseUrl, rotateChatEndpoint } from "../endpoints.js";
+import { getQoderChatBaseUrl, getQoderChatURL, getQoderRegionConfig } from "../region.js";
 import { qoderEncodeBody } from "./encoding.js";
 import { isDegenerateDsmlTurn, stripDsmlResidue, stripThinkingTags, ThinkingTagParser } from "./thinking.js";
 import { transformMessagesForQoder, transformTools } from "./transform.js";
@@ -41,6 +42,27 @@ const MODEL_BUSY_CODE = "10605";
 const DEFAULT_MODEL_BUSY_RETRIES = 2;
 const MAX_MODEL_BUSY_RETRIES = 10;
 const MODEL_BUSY_MAX_WAIT_MS = 5_000;
+
+/**
+ * Qoder tracks the daily chat allowance per node, so an account can exhaust it
+ * on one node while another node still serves the same account (this is what
+ * the official CLI avoids by routing agent chat to its remote-agent node).
+ * Code 110 is that rejection; it is recoverable only by switching nodes, never
+ * by re-sending to the same one.
+ */
+const DAILY_CHAT_LIMIT_CODE = "110";
+const MAX_CHAT_ENDPOINT_SWITCHES = 3;
+
+/** A "daily chat limit" rejection from one Qoder chat node. */
+export class QoderDailyChatLimitError extends Error {
+  constructor(
+    message: string,
+    readonly sawModelOutput = false,
+  ) {
+    super(message);
+    this.name = "QoderDailyChatLimitError";
+  }
+}
 
 /** A recovery-eligible "model busy" rejection from Qoder's queue scheduler. */
 class QoderModelBusyError extends Error {
@@ -76,6 +98,18 @@ function parseJsonObject(value: unknown, depth = 0): Record<string, unknown> | u
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * Recognize Qoder's daily-chat-limit rejection. The gateway reports it as
+ * `{"code":"110","message":"Billing daily count exceeded"}` inside the envelope
+ * body (numeric `110` also appears in some builds).
+ */
+export function isDailyChatLimitRejection(body: unknown): boolean {
+  const root = parseJsonObject(body);
+  if (!root) return false;
+  const code = root.code;
+  return code === DAILY_CHAT_LIMIT_CODE || code === Number(DAILY_CHAT_LIMIT_CODE);
 }
 
 /**
@@ -669,7 +703,10 @@ export function streamQoder(
         },
       };
 
-      const chatURL = getQoderChatURL(providerMode);
+      let chatURL = getQoderChatURL(providerMode);
+      const attemptedChatBases = new Set<string>();
+      let switchedChatEndpoint = false;
+      let chatEndpointSwitches = 0;
       const modelSource = modelConfig.source || "system";
 
       // A caller-provided retry budget (including an explicit 0) wins; otherwise
@@ -819,6 +856,14 @@ export function streamQoder(
                       throw new Error("Qoder model rejected the request after partial output (10605 RESOURCE_LIMIT)");
                     }
                     throw formatQueuedBusyError(busy);
+                  }
+                  if (isDailyChatLimitRejection(envelope.body)) {
+                    // Another chat node may still serve this account; the
+                    // wrapper below switches and retries once per node.
+                    throw new QoderDailyChatLimitError(
+                      `Upstream status ${envelope.statusCodeValue}: ${envelope.body}`,
+                      sawModelOutput,
+                    );
                   }
                   throw new Error(`Upstream status ${envelope.statusCodeValue}: ${envelope.body}`);
                 }
@@ -1169,8 +1214,36 @@ export function streamQoder(
       for (let attempt = 0; ; attempt++) {
         try {
           await runAttempt();
+          if (switchedChatEndpoint) {
+            // Only persist a node that actually served a request; a node that
+            // failed again during rotation is never written.
+            rememberChatBaseUrl(providerMode, getQoderChatBaseUrl(providerMode));
+          }
           return;
         } catch (e) {
+          if (e instanceof QoderDailyChatLimitError) {
+            if (!e.sawModelOutput && chatEndpointSwitches < MAX_CHAT_ENDPOINT_SWITCHES) {
+              const nextBase = await rotateChatEndpoint(
+                providerMode,
+                { userID, authToken: accessToken, name, email, machineID },
+                attemptedChatBases,
+              );
+              if (nextBase) {
+                chatEndpointSwitches++;
+                switchedChatEndpoint = true;
+                chatURL = getQoderChatURL(providerMode);
+                headers = buildAuthHeaders(encodedBytes, chatURL, {
+                  userID,
+                  authToken: accessToken,
+                  name,
+                  email,
+                  machineID,
+                });
+                continue;
+              }
+            }
+            throw e;
+          }
           if (!(e instanceof QoderModelBusyError)) throw e;
           if (e.sawModelOutput || output.content.length > 0) {
             // Keep this wording out of pi-ai's retryable pattern: retrying a

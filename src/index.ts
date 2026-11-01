@@ -9,6 +9,7 @@ import {
 import { fetchQoderUsageForMode } from "./auth/usage.js";
 import { getCachedModels, isCacheStale, staticCnModels, staticModels, updateQoderModelsCache } from "./catalog.js";
 import { registerQoderCreditDisplay } from "./credit-display.js";
+import { applyCachedChatEndpoint, refreshChatEndpoint } from "./endpoints.js";
 import { streamQoder } from "./protocol/stream.js";
 import { getQoderBaseUrl, getQoderRegionConfig, QODER_MODES, type QoderMode } from "./region.js";
 import { createQoderUsageProvider, type UsageProvider } from "./usage-provider.js";
@@ -102,8 +103,21 @@ export default async function (pi: ExtensionAPI) {
 
   for (const mode of QODER_MODES) {
     const providerID = getQoderRegionConfig(mode).providerID;
+    // Apply the node that served the last successful chat before registering,
+    // so the first turn after a restart does not repeat the failing route.
+    applyCachedChatEndpoint(mode);
     try {
       await autoLoginQoderFromEnvironment(providerID, mode);
+      const credentials = getCachedCredentials("", providerID);
+      if (credentials?.access) {
+        await refreshChatEndpoint(mode, {
+          userID: credentials.userID || "qoder-user",
+          authToken: credentials.access,
+          name: credentials.name,
+          email: credentials.email,
+          machineID: credentials.machineID,
+        });
+      }
       await refreshModelsAtStartup(mode);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
