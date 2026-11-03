@@ -169,6 +169,34 @@ npm registry once at startup and logs a single line when a newer release exists:
 Nothing is installed automatically. The request has a 2s timeout, failures are silent,
 and `PI_PROVIDER_QODER_SKIP_UPDATE_CHECK=1` turns the check off.
 
+## Marketplace install (automatic updates)
+
+An npm install never self-updates. To let omp keep this extension current, add this
+repository as a marketplace and install from it:
+
+```bash
+omp plugin marketplace add simonsmh/pi-provider-qoder
+omp plugin install pi-provider-qoder@pi-provider-qoder
+omp config set marketplace.autoUpdate auto
+```
+
+Marketplace installs clone a repository and symlink it — they never run a build — and
+`dist/` is gitignored on `main`, so releases publish the built extension to a `dist`
+branch (`.github/workflows/dist-branch.yml`). The catalog at `.omp-plugin/marketplace.json`
+must declare the released version: `npm run release:sync-marketplace` keeps it in step,
+and `prepublishOnly` fails when the two drift.
+## Version notices
+
+npm-installed extensions get no update check from the host, so the extension asks the
+npm registry once at startup and logs a single line when a newer release exists:
+
+```text
+[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: omp plugin upgrade pi-provider-qoder
+```
+
+Nothing is installed automatically. The request has a 2s timeout, failures are silent,
+and `PI_PROVIDER_QODER_SKIP_UPDATE_CHECK=1` turns the check off.
+
 ## License
 
 MIT

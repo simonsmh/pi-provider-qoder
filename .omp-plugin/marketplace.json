@@ -1,0 +1,27 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pi-provider-qoder",
+  "owner": {
+    "name": "simonsmh"
+  },
+  "metadata": {
+    "description": "Marketplace catalog so pi-provider-qoder can be installed with automatic updates.",
+    "version": "0.6.9"
+  },
+  "plugins": [
+    {
+      "name": "pi-provider-qoder",
+      "description": "Qoder provider for pi/omp — OAuth login, COSY signatures, model catalog, usage reporting.",
+      "source": {
+        "source": "github",
+        "repo": "simonsmh/pi-provider-qoder",
+        "ref": "dist"
+      },
+      "category": "development",
+      "keywords": ["pi", "omp", "qoder", "provider"],
+      "repository": "https://github.com/simonsmh/pi-provider-qoder",
+      "license": "MIT",
+      "version": "0.6.9"
+    }
+  ]
+}
