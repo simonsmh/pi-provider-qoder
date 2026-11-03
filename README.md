@@ -157,6 +157,18 @@ Sanitized billing samples in `src/__fixtures__/billing/usage.json` cover free Gl
 calls, paid Global/CN calls, and two Kimi-K3 calls totaling 1.03185159 Credits.
 Session accounting regression tests use these samples without making live requests.
 
+## Version notices
+
+npm-installed extensions get no update check from the host, so the extension asks the
+npm registry once at startup and logs a single line when a newer release exists:
+
+```text
+[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: omp plugin upgrade pi-provider-qoder
+```
+
+Nothing is installed automatically. The request has a 2s timeout, failures are silent,
+and `PI_PROVIDER_QODER_SKIP_UPDATE_CHECK=1` turns the check off.
+
 ## Marketplace install (automatic updates)
 
 An npm install never self-updates. To let omp keep this extension current, add this
@@ -173,6 +185,17 @@ Marketplace installs clone a repository and symlink it — they never run a buil
 branch (`.github/workflows/dist-branch.yml`). The catalog at `.omp-plugin/marketplace.json`
 must declare the released version: `npm run release:sync-marketplace` keeps it in step,
 and `prepublishOnly` fails when the two drift.
+## Version notices
+
+npm-installed extensions get no update check from the host, so the extension asks the
+npm registry once at startup and logs a single line when a newer release exists:
+
+```text
+[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: omp plugin upgrade pi-provider-qoder
+```
+
+Nothing is installed automatically. The request has a 2s timeout, failures are silent,
+and `PI_PROVIDER_QODER_SKIP_UPDATE_CHECK=1` turns the check off.
 
 ## License
 

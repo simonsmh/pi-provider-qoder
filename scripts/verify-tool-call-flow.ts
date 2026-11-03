@@ -53,6 +53,9 @@ Object.assign(process.env, {
   PI_CODING_AGENT_DIR: path.join(temporary, "home/.pi/agent"),
   TMPDIR: path.join(temporary, "tmp"),
   JITI_FS_CACHE: "false",
+  // The extension probes the npm registry at startup; the synthetic environment
+  // denies every non-mocked request, so the probe must be off here.
+  PI_PROVIDER_QODER_SKIP_UPDATE_CHECK: "1",
 });
 for (const directory of [
   process.env.HOME,
