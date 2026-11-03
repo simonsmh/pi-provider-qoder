@@ -28,8 +28,9 @@
     "test:live": "tsx scripts/record-live-fixtures.ts",
     "test:watch": "vitest",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run check && npm run build",
-    "demo:credits": "tsx scripts/demo-credit-footer.ts"
+    "prepublishOnly": "npm run check && node scripts/sync-marketplace-version.mjs --check && npm run build",
+    "demo:credits": "tsx scripts/demo-credit-footer.ts",
+    "release:sync-marketplace": "node scripts/sync-marketplace-version.mjs"
   },
   "pi": {
     "extensions": [

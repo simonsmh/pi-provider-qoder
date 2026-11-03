@@ -157,6 +157,23 @@ Sanitized billing samples in `src/__fixtures__/billing/usage.json` cover free Gl
 calls, paid Global/CN calls, and two Kimi-K3 calls totaling 1.03185159 Credits.
 Session accounting regression tests use these samples without making live requests.
 
+## Marketplace install (automatic updates)
+
+An npm install never self-updates. To let omp keep this extension current, add this
+repository as a marketplace and install from it:
+
+```bash
+omp plugin marketplace add simonsmh/pi-provider-qoder
+omp plugin install pi-provider-qoder@pi-provider-qoder
+omp config set marketplace.autoUpdate auto
+```
+
+Marketplace installs clone a repository and symlink it — they never run a build — and
+`dist/` is gitignored on `main`, so releases publish the built extension to a `dist`
+branch (`.github/workflows/dist-branch.yml`). The catalog at `.omp-plugin/marketplace.json`
+must declare the released version: `npm run release:sync-marketplace` keeps it in step,
+and `prepublishOnly` fails when the two drift.
+
 ## License
 
 MIT

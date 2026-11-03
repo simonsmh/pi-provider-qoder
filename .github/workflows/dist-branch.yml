@@ -1,0 +1,55 @@
+name: dist-branch
+
+# Publish the built extension to a `dist` branch on every release tag.
+#
+# Marketplace installs clone a repository and symlink it; they never run a build.
+# `dist/` is gitignored on main, so a marketplace entry pointing at main would
+# produce a package whose `pi.extensions` target does not exist. This workflow
+# keeps a build-only branch that a catalog entry can point at.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+      - name: Push dist branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          cp -R dist "$out/dist"
+          cp package.json README.md "$out/"
+
+          cd "$out"
+          git init -q -b dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "dist: build ${GITHUB_REF_NAME}"
+
+          # The branch is build output only; never merge it back into main.
+          git push --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" dist
