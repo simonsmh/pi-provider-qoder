@@ -112,6 +112,7 @@ export default async function (pi: ExtensionAPI) {
   // the network, and a failure here is uninteresting.
   void checkForUpdate({
     currentVersion: CURRENT_VERSION,
+    hostExecutable: process.argv[1],
     disabled: process.env.PI_PROVIDER_QODER_SKIP_UPDATE_CHECK === "1",
   }).then((notice) => {
     if (notice) console.error(notice);

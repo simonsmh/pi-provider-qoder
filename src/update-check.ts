@@ -32,10 +32,22 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * Install/upgrade command for the host that is running the extension.
+ * `pi install npm:...` is the documented path for pi-only installs, where `omp`
+ * does not exist; when the host cannot be told apart, name both.
+ */
+export function upgradeCommand(hostExecutable?: string): string {
+  const binary = (hostExecutable ?? "").split(/[\\/]/).pop() ?? "";
+  if (/omp/i.test(binary)) return `omp plugin upgrade ${PACKAGE_NAME}`;
+  if (/^pi/i.test(binary)) return `pi install npm:${PACKAGE_NAME}`;
+  return `omp plugin upgrade ${PACKAGE_NAME} (pi: pi install npm:${PACKAGE_NAME})`;
+}
+
 /** One-line notice when `latest` is newer than `current`; null when up to date. */
-export function formatUpdateNotice(current: string, latest: string): string | null {
+export function formatUpdateNotice(current: string, latest: string, hostExecutable?: string): string | null {
   if (compareVersions(latest, current) <= 0) return null;
-  return `[${PACKAGE_NAME}] ${latest} is available (running ${current}). Upgrade: omp plugin upgrade ${PACKAGE_NAME}`;
+  return `[${PACKAGE_NAME}] ${latest} is available (running ${current}). Upgrade: ${upgradeCommand(hostExecutable)}`;
 }
 
 export async function fetchLatestVersion(
@@ -61,6 +73,8 @@ export async function fetchLatestVersion(
 
 export interface UpdateCheckOptions {
   currentVersion: string;
+  /** Path or name of the host binary, used to pick the upgrade instruction. */
+  hostExecutable?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   /** Set by the host wiring from an env opt-out. */
@@ -72,5 +86,5 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<strin
   if (options.disabled) return null;
   const latest = await fetchLatestVersion(options.fetchImpl ?? fetch, options.timeoutMs);
   if (!latest) return null;
-  return formatUpdateNotice(options.currentVersion, latest);
+  return formatUpdateNotice(options.currentVersion, latest, options.hostExecutable);
 }

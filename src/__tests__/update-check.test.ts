@@ -38,9 +38,18 @@ describe("compareVersions", () => {
 });
 
 describe("formatUpdateNotice", () => {
-  it("reports a newer release with the upgrade command", () => {
+  it("reports a newer release with both upgrade commands when the host is unknown", () => {
     expect(formatUpdateNotice("0.6.1", "0.6.9")).toBe(
+      "[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: omp plugin upgrade pi-provider-qoder (pi: pi install npm:pi-provider-qoder)",
+    );
+  });
+
+  it("names only the command that exists on the running host", () => {
+    expect(formatUpdateNotice("0.6.1", "0.6.9", "/usr/local/bin/omp")).toBe(
       "[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: omp plugin upgrade pi-provider-qoder",
+    );
+    expect(formatUpdateNotice("0.6.1", "0.6.9", "C:\\tools\\pi.exe")).toBe(
+      "[pi-provider-qoder] 0.6.9 is available (running 0.6.1). Upgrade: pi install npm:pi-provider-qoder",
     );
   });
 
