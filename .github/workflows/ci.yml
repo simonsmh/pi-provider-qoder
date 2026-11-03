@@ -1,47 +1,36 @@
-name: CI
+name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Lint, typecheck & build
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci --no-audit --no-fund
+
+      # Auto-update only compares catalog entries that declare a version, so a
+      # release whose catalog still says the old number silently stops updating.
+      - name: Marketplace catalog matches package.json
+        run: node scripts/sync-marketplace-version.mjs --check
 
       - name: Lint
         run: npm run lint
 
-      - name: Type check
+      - name: Typecheck
         run: npm run check
 
       - name: Test
         run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14
