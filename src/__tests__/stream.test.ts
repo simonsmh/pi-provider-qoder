@@ -60,6 +60,24 @@ const DONE_SSE =
   }) +
   "\n\n";
 
+/**
+ * A well-formed envelope whose inner chunk is cut short — what a proxy or the
+ * gateway leaves behind when it truncates one upstream payload.
+ */
+function sseTruncatedPayload(body: object): string {
+  const envelope = JSON.parse(sseEnvelope(body).slice("data:".length).trim()) as {
+    headers: unknown;
+    body: string;
+    statusCodeValue: number;
+    statusCode: string;
+  };
+  return (
+    "data:" +
+    JSON.stringify({ ...envelope, body: envelope.body.slice(0, Math.max(1, envelope.body.length - 12)) }) +
+    "\n\n"
+  );
+}
+
 function chunk(delta: object, extra: object = {}): object {
   return {
     choices: [{ delta, index: 0 }],
@@ -462,6 +480,51 @@ describe("streamQoder", () => {
     expect(msg.stopReason).toBe("toolUse");
     const toolCall = msg.content.find((c) => c.type === "toolCall");
     expect(toolCall).toBeDefined();
+  });
+
+  it("reports a lost upstream payload as a retryable turn, not a bad tool call", async () => {
+    // The closing argument fragment never arrives: the accumulated text stays
+    // invalid JSON. The turn must surface as a transient stream failure with no
+    // half-built tool call, so the host can replay it.
+    const sse =
+      sseEnvelope(
+        chunk({
+          tool_calls: [{ index: 0, id: "call_1", function: { name: "bash", arguments: '{"command":"echo hello ' } }],
+        }),
+      ) +
+      sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world","i":"run"}' } }] })) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const err = events.find((e) => e.type === "error");
+    expect(err, "expected an error event").toBeDefined();
+    const msg = (err as { error: AssistantMessage }).error;
+    // pi-ai vetoes retries on "invalid" wording and retries on "server error".
+    expect(msg.errorMessage).toMatch(/server error/i);
+    expect(msg.errorMessage).not.toMatch(/invalid/i);
+    expect(msg.content.find((c) => c.type === "toolCall")).toBeUndefined();
+    expect(events.find((e) => e.type === "done")).toBeUndefined();
+  });
+
+  it("keeps the plain argument error when no payload was lost", async () => {
+    const sse =
+      sseEnvelope(
+        chunk({
+          tool_calls: [{ index: 0, id: "call_1", function: { name: "bash", arguments: '{"command":' } }],
+        }),
+      ) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const err = events.find((e) => e.type === "error");
+    const msg = (err as { error: AssistantMessage }).error;
+    expect(msg.errorMessage).toMatch(/Invalid or incomplete tool-call JSON/);
   });
 
   it("assembles reasoning chunks before the final answer", async () => {

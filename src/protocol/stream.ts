@@ -259,6 +259,24 @@ function invalidToolArguments(state: ToolCallState): Error {
   return new Error(`Invalid or incomplete tool-call JSON (characters=${state.argumentLength})`);
 }
 
+/**
+ * Wording is load-bearing: pi-ai classifies assistant errors by message text,
+ * and `invalid` (in the plain argument error above) is an explicit
+ * non-retryable signal, while `server error` is a retryable one. A stream the
+ * gateway cut leaves nothing executable behind, so the host should replay the
+ * turn instead of ending the session.
+ */
+function lostToolArgumentStream(state: ToolCallState, droppedPayloads: number): Error {
+  return new Error(
+    `Qoder server error: tool-call argument stream was cut off after ${state.argumentLength} characters (${droppedPayloads} unparseable upstream payload(s))`,
+  );
+}
+
+/** Visible output that a replay would duplicate. */
+function hasCommittedVisibleOutput(output: AssistantMessage): boolean {
+  return output.content.some((block) => block.type === "text" && block.text.trim() !== "");
+}
+
 // Only locate a possible root-object boundary here. JSON.parse remains the
 // authority on grammar; scanning each new fragment avoids parsing prefixes.
 function appendToolArguments(state: ToolCallState, fragment: string): void {
@@ -811,6 +829,10 @@ export function streamQoder(
         const thinkingParser = thinkingEnabled ? new ThinkingTagParser(output, stream) : null;
 
         let sawModelOutput = false;
+        // A `data:` payload the gateway or a proxy cut in half is dropped below.
+        // Count them: a dropped payload silently shortens tool-call arguments,
+        // and the turn must not die as an unrelated argument error.
+        let droppedPayloads = 0;
 
         // `data: [DONE]` is the end of the response. Break the read loop too, not
         // just the line loop: Qoder's gateway keeps the HTTP body open after the
@@ -847,6 +869,9 @@ export function streamQoder(
                 break;
               }
 
+              // Which JSON the SyntaxError came from decides whether the line
+              // was noise (envelope) or lost model output (payload).
+              let parsePhase: "envelope" | "payload" = "envelope";
               try {
                 const envelope = JSON.parse(dataStr);
                 if (envelope.statusCodeValue && envelope.statusCodeValue !== 200) {
@@ -888,6 +913,7 @@ export function streamQoder(
                 }
                 if (!innerStr) continue;
 
+                parsePhase = "payload";
                 const inner = JSON.parse(innerStr);
                 if (inner.id) output.responseId = inner.id as string;
                 if (inner.model) output.responseModel = inner.model as string;
@@ -1138,6 +1164,11 @@ export function streamQoder(
                 // But a genuine upstream error (thrown below) must propagate to the
                 // outer catch and surface as stopReason="error", not be swallowed.
                 if (e instanceof SyntaxError) {
+                  // An unparseable envelope is keepalive noise. An unparseable
+                  // payload is model output we will never see; it has to be
+                  // accounted for, or the turn ends as an unexplained
+                  // "invalid arguments" failure that no retry policy covers.
+                  if (parsePhase === "payload") droppedPayloads += 1;
                   if (process.env.QODER_DEBUG) {
                     console.error("[pi-provider-qoder] skipping malformed SSE line:", dataStr.slice(0, 200));
                   }
@@ -1177,7 +1208,21 @@ export function streamQoder(
             if (!state.id || !state.name) {
               throw new Error(`Unresolved tool-call identity (characters=${state.argumentLength})`);
             }
-            parseToolArguments(state);
+            try {
+              parseToolArguments(state);
+            } catch (e) {
+              // Nothing executable has been published, so a lost payload is a
+              // replay-safe transport failure. Withdraw the provisional blocks
+              // first: a half-built call would veto the host's retry.
+              if (droppedPayloads > 0 && !hasCommittedVisibleOutput(output)) {
+                for (const block of toolCalls.statesByBlock.keys()) {
+                  const index = output.content.indexOf(block);
+                  if (index !== -1) output.content.splice(index, 1);
+                }
+                throw lostToolArgumentStream(state, droppedPayloads);
+              }
+              throw e;
+            }
           }
           // Map insertion order is the order calls first became identifiable,
           // independent of sparse/reused upstream indexes and provisional buffers.
