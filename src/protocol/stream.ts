@@ -1212,14 +1212,25 @@ export function streamQoder(
               parseToolArguments(state);
             } catch (e) {
               // Nothing executable has been published, so a lost payload is a
-              // replay-safe transport failure. Withdraw the provisional blocks
-              // first: a half-built call would veto the host's retry.
+              // replay-safe transport failure. The terminal error must carry
+              // no half-built call, or it would veto the host's retry — but
+              // it must be a separate message: toolcall_start/delta events
+              // already queued reference `output` itself, so splicing its
+              // content here would leave those events pointing at a block
+              // that is gone (or shifted), and a consumer reading
+              // event.partial.content[event.contentIndex] would get
+              // undefined. Leave `output` untouched and filter tool calls
+              // out of the copy instead.
               if (droppedPayloads > 0 && !hasCommittedVisibleOutput(output)) {
-                for (const block of toolCalls.statesByBlock.keys()) {
-                  const index = output.content.indexOf(block);
-                  if (index !== -1) output.content.splice(index, 1);
-                }
-                throw lostToolArgumentStream(state, droppedPayloads);
+                const terminal: AssistantMessage = {
+                  ...output,
+                  content: output.content.filter((block) => block.type !== "toolCall"),
+                  stopReason: "error",
+                  errorMessage: lostToolArgumentStream(state, droppedPayloads).message,
+                };
+                stream.push({ type: "error", reason: "error", error: terminal });
+                stream.end();
+                return;
               }
               throw e;
             }

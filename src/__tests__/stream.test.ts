@@ -509,6 +509,40 @@ describe("streamQoder", () => {
     expect(events.find((e) => e.type === "done")).toBeUndefined();
   });
 
+  it("does not invalidate queued tool-call partials when reporting a lost payload", async () => {
+    // Codex review on PR #52: withdrawing the provisional blocks by splicing
+    // output.content would break toolcall_start/delta events already queued
+    // with partial: output, since those events index into that same object.
+    // The terminal error must therefore be a separate, tool-call-free
+    // message, leaving the queued partials intact.
+    const sse =
+      sseEnvelope(
+        chunk({
+          tool_calls: [{ index: 0, id: "call_1", function: { name: "bash", arguments: '{"command":"echo hello ' } }],
+        }),
+      ) +
+      sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world","i":"run"}' } }] })) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const start = events.find((e) => e.type === "toolcall_start") as unknown as {
+      contentIndex: number;
+      partial: AssistantMessage;
+    };
+    expect(start, "expected a toolcall_start event").toBeDefined();
+    const queued = start.partial.content[start.contentIndex];
+    expect(queued?.type).toBe("toolCall");
+    expect((queued as ToolCall).id).toBe("call_1");
+
+    const err = events.find((e) => e.type === "error") as { error: AssistantMessage };
+    expect(err.error).not.toBe(start.partial);
+    expect(err.error.content.find((c) => c.type === "toolCall")).toBeUndefined();
+    expect(err.error.errorMessage).toMatch(/server error/i);
+  });
+
   it("keeps the plain argument error when no payload was lost", async () => {
     const sse =
       sseEnvelope(
