@@ -265,11 +265,15 @@ function invalidToolArguments(state: ToolCallState): Error {
  * non-retryable signal, while `server error` is a retryable one. A stream the
  * gateway cut leaves nothing executable behind, so the host should replay the
  * turn instead of ending the session.
+ *
+ * The message carries no diagnostic counts: a bare status-code-like token in
+ * it (for example, an argument length that happens to be 403) would let a
+ * host that vetoes bare 403 as an auth failure classify this retryable
+ * failure as non-retryable. Counts live only in the QODER_DEBUG log at the
+ * call site, never in the classified message.
  */
-function lostToolArgumentStream(state: ToolCallState, droppedPayloads: number): Error {
-  return new Error(
-    `Qoder server error: tool-call argument stream was cut off after ${state.argumentLength} characters (${droppedPayloads} unparseable upstream payload(s))`,
-  );
+function lostToolArgumentStream(): Error {
+  return new Error("Qoder server error: tool-call argument stream was cut off (unparseable upstream payload)");
 }
 
 /** Visible output that a replay would duplicate. */
@@ -1222,11 +1226,21 @@ export function streamQoder(
               // undefined. Leave `output` untouched and filter tool calls
               // out of the copy instead.
               if (droppedPayloads > 0 && !hasCommittedVisibleOutput(output)) {
+                // Cancellation outranks recovery: if the caller aborted while
+                // cleanup was running, rethrow so the outer catch classifies
+                // this as `aborted` instead of publishing a retry-classified
+                // server error for a turn the user cancelled.
+                if (options?.signal?.aborted) throw e;
+                if (process.env.QODER_DEBUG) {
+                  console.error(
+                    `[pi-provider-qoder] lost tool-call argument stream: argumentLength=${state.argumentLength}, droppedPayloads=${droppedPayloads}`,
+                  );
+                }
                 const terminal: AssistantMessage = {
                   ...output,
                   content: output.content.filter((block) => block.type !== "toolCall"),
                   stopReason: "error",
-                  errorMessage: lostToolArgumentStream(state, droppedPayloads).message,
+                  errorMessage: lostToolArgumentStream().message,
                 };
                 stream.push({ type: "error", reason: "error", error: terminal });
                 stream.end();
