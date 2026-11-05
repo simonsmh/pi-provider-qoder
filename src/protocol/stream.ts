@@ -255,8 +255,16 @@ function retireCompleteCandidates(toolCalls: ToolCallAggregation, candidates: To
 const TOOL_ARGUMENT_STRUCTURE = /["\\{}[\]]/g;
 const NON_JSON_WHITESPACE = /[^ \t\r\n]/;
 
+/**
+ * A tool call that cannot be turned into an executable call: arguments that
+ * never parse, or an identity that never arrived. When a payload was also
+ * dropped, the caller treats it as the transport failure it is; without one it
+ * stays the plain argument error it always was.
+ */
+class UnusableToolCallError extends Error {}
+
 function invalidToolArguments(state: ToolCallState): Error {
-  return new Error(`Invalid or incomplete tool-call JSON (characters=${state.argumentLength})`);
+  return new UnusableToolCallError(`Invalid or incomplete tool-call JSON (characters=${state.argumentLength})`);
 }
 
 /**
@@ -338,7 +346,7 @@ function parseToolArguments(state: ToolCallState): ToolCall["arguments"] {
     }
   }
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
-    throw new Error(`Non-object tool-call arguments (characters=${state.argumentLength})`);
+    throw new UnusableToolCallError(`Non-object tool-call arguments (characters=${state.argumentLength})`);
   }
   state.parsedArguments = args as ToolCall["arguments"];
   return state.parsedArguments;
@@ -521,6 +529,11 @@ export function streamQoder(
     stopReason: "stop",
     timestamp: Date.now(),
   };
+
+  // Unparseable upstream payloads dropped by the reader in the current attempt.
+  // Shared with the outer catch so every path that gives up on a tool call can
+  // tell a truncated stream from a genuinely bad call.
+  let droppedPayloads = 0;
 
   (async () => {
     try {
@@ -829,9 +842,10 @@ export function streamQoder(
 
         let sawModelOutput = false;
         // A `data:` payload the gateway or a proxy cut in half is dropped below.
-        // Count them: a dropped payload silently shortens tool-call arguments,
-        // and the turn must not die as an unrelated argument error.
-        let droppedPayloads = 0;
+        // Counted per attempt (declared outside): a dropped payload silently
+        // shortens tool-call arguments, and the turn must not die as an
+        // unrelated argument error.
+        droppedPayloads = 0;
 
         // `data: [DONE]` is the end of the response. Break the read loop too, not
         // just the line loop: Qoder's gateway keeps the HTTP body open after the
@@ -1205,49 +1219,13 @@ export function streamQoder(
           // Validate the whole batch before publishing any successful end event.
           for (const state of toolCalls.states) {
             if (!state.id || !state.name) {
-              throw new Error(`Unresolved tool-call identity (characters=${state.argumentLength})`);
+              throw new UnusableToolCallError(`Unresolved tool-call identity (characters=${state.argumentLength})`);
             }
-            try {
-              parseToolArguments(state);
-            } catch (e) {
-              // Nothing executable has been published either way, so a lost
-              // payload is a transport failure whether or not the turn already
-              // streamed text. A host that replays a classified error drops the
-              // failed assistant turn from the context it re-sends (omp 18.x
-              // removes it as `auto-retry`), so streamed text neither vetoes the
-              // retry nor survives into it: gating on visible output here only
-              // guaranteed a dead turn. The terminal error must carry no
-              // half-built call, or it would veto the retry — but it must be a
-              // separate message: toolcall_start/delta events already queued
-              // reference `output` itself, so splicing its content here would
-              // leave those events pointing at a block that is gone (or
-              // shifted), and a consumer reading
-              // event.partial.content[event.contentIndex] would get undefined.
-              // Leave `output` untouched and filter tool calls out of the copy
-              // instead.
-              if (droppedPayloads > 0) {
-                // Cancellation outranks recovery: if the caller aborted while
-                // cleanup was running, rethrow so the outer catch classifies
-                // this as `aborted` instead of publishing a retry-classified
-                // server error for a turn the user cancelled.
-                if (options?.signal?.aborted) throw e;
-                if (process.env.QODER_DEBUG) {
-                  console.error(
-                    `[pi-provider-qoder] lost tool-call argument stream: argumentLength=${state.argumentLength}, droppedPayloads=${droppedPayloads}`,
-                  );
-                }
-                const terminal: AssistantMessage = {
-                  ...output,
-                  content: output.content.filter((block) => block.type !== "toolCall"),
-                  stopReason: "error",
-                  errorMessage: lostToolArgumentStream().message,
-                };
-                stream.push({ type: "error", reason: "error", error: terminal });
-                stream.end();
-                return;
-              }
-              throw e;
-            }
+            // Validation only: the terminal classification happens once, in the
+            // stream's outer catch, so every site that gives up on a call — this
+            // loop, the identity check above, and the mid-stream argument
+            // accumulator — reports the same failure the same way.
+            parseToolArguments(state);
           }
           // Map insertion order is the order calls first became identifiable,
           // independent of sparse/reused upstream indexes and provisional buffers.
@@ -1363,7 +1341,38 @@ export function streamQoder(
         }
       }
     } catch (e: unknown) {
-      output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+      const aborted = options?.signal?.aborted === true;
+      if (!aborted && droppedPayloads > 0 && e instanceof UnusableToolCallError) {
+        // Nothing executable has been published either way, so a lost payload is
+        // a transport failure whether or not the turn already streamed text. A
+        // host that replays a classified error drops the failed assistant turn
+        // from the context it re-sends (omp 18.x removes it as `auto-retry`), so
+        // streamed text neither vetoes the retry nor survives into it.
+        //
+        // The terminal message must not be `output` itself: toolcall_start/delta
+        // events already queued carry `partial: output`, and removing their
+        // blocks from it would leave event.partial.content[contentIndex]
+        // undefined. Publish a tool-call-free copy and leave `output` alone.
+        if (process.env.QODER_DEBUG) {
+          console.error(
+            `[pi-provider-qoder] lost tool-call argument stream: ${e.message}, droppedPayloads=${droppedPayloads}`,
+          );
+        }
+        const terminal: AssistantMessage = {
+          ...output,
+          content: output.content.filter((block) => block.type !== "toolCall"),
+          stopReason: "error",
+          errorMessage: lostToolArgumentStream().message,
+        };
+        stream.push({ type: "error", reason: "error", error: terminal });
+        try {
+          stream.end();
+        } catch {}
+        return;
+      }
+      // Cancellation outranks recovery: an aborted turn keeps `aborted`, never a
+      // retry-classified server error for a turn the user cancelled.
+      output.stopReason = aborted ? "aborted" : "error";
       output.errorMessage = e instanceof Error ? e.message : String(e);
       stream.push({ type: "error", reason: output.stopReason, error: output });
       try {
