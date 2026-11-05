@@ -666,9 +666,7 @@ describe("streamQoder", () => {
         chunk({ tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: '{"a":}' } }] }),
       ) +
       sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world"}' } }] })) +
-      sseEnvelope(
-        chunk({ tool_calls: [{ index: 0, id: "call_2", function: { name: "read", arguments: "" } }] }),
-      ) +
+      sseEnvelope(chunk({ tool_calls: [{ index: 0, id: "call_2", function: { name: "read", arguments: "" } }] })) +
       sseEnvelope(finishChunk("tool_calls")) +
       DONE_SSE;
     globalThis.fetch = mockFetch(sse);
