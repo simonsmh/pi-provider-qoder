@@ -629,6 +629,60 @@ describe("streamQoder", () => {
     expect(events.find((e) => e.type === "done")).toBeUndefined();
   });
 
+  it("reports a lost payload as the retryable transport error when junk arrives after the argument object closed", async () => {
+    // Same lost-payload turn, third way of giving up on the call: the
+    // argument object already closed, so a later fragment is trailing junk
+    // and appendToolArguments rejects it mid-stream. It must classify the
+    // same way as the final validation loop.
+    const sse =
+      sseEnvelope(
+        chunk({
+          tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: '{"command":"echo hi"}' } }],
+        }),
+      ) +
+      sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world"}' } }] })) +
+      sseEnvelope(chunk({ tool_calls: [{ index: 0, function: { arguments: "xyz" } }] })) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const err = events.find((e) => e.type === "error") as { error: AssistantMessage };
+    expect(err, "expected an error event").toBeDefined();
+    expect(err.error.errorMessage).toMatch(/server error/i);
+    expect(PiAi.isRetryableAssistantError(err.error)).toBe(true);
+    expect(err.error.content.find((c) => c.type === "toolCall")).toBeUndefined();
+    expect(events.find((e) => e.type === "done")).toBeUndefined();
+  });
+
+  it("reports a lost payload as the retryable transport error when a new call retires an unparseable one mid-stream", async () => {
+    // Same lost-payload turn, fourth way of giving up on the call: the first
+    // call's arguments closed structurally but never parse, and a second call
+    // arriving on the same index retires it mid-stream, so parseToolArguments
+    // rejects it before the finish chunk. It must classify the same way.
+    const sse =
+      sseEnvelope(
+        chunk({ tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: '{"a":}' } }] }),
+      ) +
+      sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world"}' } }] })) +
+      sseEnvelope(
+        chunk({ tool_calls: [{ index: 0, id: "call_2", function: { name: "read", arguments: "" } }] }),
+      ) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const err = events.find((e) => e.type === "error") as { error: AssistantMessage };
+    expect(err, "expected an error event").toBeDefined();
+    expect(err.error.errorMessage).toMatch(/server error/i);
+    expect(PiAi.isRetryableAssistantError(err.error)).toBe(true);
+    expect(err.error.content.find((c) => c.type === "toolCall")).toBeUndefined();
+    expect(events.find((e) => e.type === "done")).toBeUndefined();
+  });
+
   it("reports aborted, not a retryable server error, when cancelled during cleanup after a lost payload", async () => {
     // Codex review on PR #52: if the caller aborts while reader.cancel()
     // cleanup runs after a dropped payload, the direct terminal path must
