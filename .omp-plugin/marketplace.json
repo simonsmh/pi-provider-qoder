@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Marketplace catalog so pi-provider-qoder can be installed with automatic updates.",
-    "version": "0.6.11"
+    "version": "0.6.12"
   },
   "plugins": [
     {
@@ -26,7 +26,7 @@
       ],
       "repository": "https://github.com/simonsmh/pi-provider-qoder",
       "license": "MIT",
-      "version": "0.6.11"
+      "version": "0.6.12"
     }
   ]
 }
