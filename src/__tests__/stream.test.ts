@@ -582,7 +582,8 @@ describe("streamQoder", () => {
     // argument stream was cut, and the old visible-output gate downgraded the
     // failure to the non-retryable "Invalid or incomplete tool-call JSON", so
     // nothing replayed it. A lost payload is a transport failure regardless of
-    // what text preceded it; repeating that text is the host's call to make.
+    // what text preceded it; a host replaying the turn drops the failed
+    // assistant message from the context it re-sends.
     const sse =
       sseEnvelope(chunk({ content: "派两个子代理并行。", role: "assistant" })) +
       sseEnvelope(

@@ -1211,11 +1211,12 @@ export function streamQoder(
               parseToolArguments(state);
             } catch (e) {
               // Nothing executable has been published either way, so a lost
-              // payload is a replay-safe transport failure whether or not the
-              // turn already streamed text. Text that a replay would repeat is
-              // the host's call to make: it sees the committed content and can
-              // still decline. Keeping the terminal message non-retryable here
-              // only guarantees a dead turn. The terminal error must carry no
+              // payload is a transport failure whether or not the turn already
+              // streamed text. A host that replays a classified error drops the
+              // failed assistant turn from the context it re-sends (omp 18.x
+              // removes it as `auto-retry`), so streamed text neither vetoes the
+              // retry nor survives into it: gating on visible output here only
+              // guaranteed a dead turn. The terminal error must carry no
               // half-built call, or it would veto the retry — but it must be a
               // separate message: toolcall_start/delta events already queued
               // reference `output` itself, so splicing its content here would
