@@ -276,11 +276,6 @@ function lostToolArgumentStream(): Error {
   return new Error("Qoder server error: tool-call argument stream was cut off (unparseable upstream payload)");
 }
 
-/** Visible output that a replay would duplicate. */
-function hasCommittedVisibleOutput(output: AssistantMessage): boolean {
-  return output.content.some((block) => block.type === "text" && block.text.trim() !== "");
-}
-
 // Only locate a possible root-object boundary here. JSON.parse remains the
 // authority on grammar; scanning each new fragment avoids parsing prefixes.
 function appendToolArguments(state: ToolCallState, fragment: string): void {
@@ -1215,17 +1210,21 @@ export function streamQoder(
             try {
               parseToolArguments(state);
             } catch (e) {
-              // Nothing executable has been published, so a lost payload is a
-              // replay-safe transport failure. The terminal error must carry
-              // no half-built call, or it would veto the host's retry — but
-              // it must be a separate message: toolcall_start/delta events
-              // already queued reference `output` itself, so splicing its
-              // content here would leave those events pointing at a block
-              // that is gone (or shifted), and a consumer reading
-              // event.partial.content[event.contentIndex] would get
-              // undefined. Leave `output` untouched and filter tool calls
-              // out of the copy instead.
-              if (droppedPayloads > 0 && !hasCommittedVisibleOutput(output)) {
+              // Nothing executable has been published either way, so a lost
+              // payload is a replay-safe transport failure whether or not the
+              // turn already streamed text. Text that a replay would repeat is
+              // the host's call to make: it sees the committed content and can
+              // still decline. Keeping the terminal message non-retryable here
+              // only guarantees a dead turn. The terminal error must carry no
+              // half-built call, or it would veto the retry — but it must be a
+              // separate message: toolcall_start/delta events already queued
+              // reference `output` itself, so splicing its content here would
+              // leave those events pointing at a block that is gone (or
+              // shifted), and a consumer reading
+              // event.partial.content[event.contentIndex] would get undefined.
+              // Leave `output` untouched and filter tool calls out of the copy
+              // instead.
+              if (droppedPayloads > 0) {
                 // Cancellation outranks recovery: if the caller aborted while
                 // cleanup was running, rethrow so the outer catch classifies
                 // this as `aborted` instead of publishing a retry-classified

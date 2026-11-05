@@ -577,6 +577,35 @@ describe("streamQoder", () => {
     expect(err.error.errorMessage).toMatch(/server error/i);
   });
 
+  it("keeps the lost payload retryable after the turn already streamed text", async () => {
+    // 2026-11-05 incident: the turn had already emitted visible text before the
+    // argument stream was cut, and the old visible-output gate downgraded the
+    // failure to the non-retryable "Invalid or incomplete tool-call JSON", so
+    // nothing replayed it. A lost payload is a transport failure regardless of
+    // what text preceded it; repeating that text is the host's call to make.
+    const sse =
+      sseEnvelope(chunk({ content: "派两个子代理并行。", role: "assistant" })) +
+      sseEnvelope(
+        chunk({
+          tool_calls: [{ index: 0, id: "call_1", function: { name: "bash", arguments: '{"command":"echo hello ' } }],
+        }),
+      ) +
+      sseTruncatedPayload(chunk({ tool_calls: [{ index: 0, function: { arguments: 'world","i":"run"}' } }] })) +
+      sseEnvelope(finishChunk("tool_calls")) +
+      DONE_SSE;
+    globalThis.fetch = mockFetch(sse);
+    const stream = streamQoder(makeModel(), makeContext(), { apiKey: "fake" });
+    const events = await consume(stream);
+
+    const err = events.find((e) => e.type === "error") as { error: AssistantMessage };
+    expect(err, "expected an error event").toBeDefined();
+    expect(err.error.stopReason).toBe("error");
+    expect(err.error.errorMessage).toMatch(/server error/i);
+    expect(PiAi.isRetryableAssistantError(err.error)).toBe(true);
+    expect(err.error.content.find((c) => c.type === "toolCall")).toBeUndefined();
+    expect(err.error.content.find((c) => c.type === "text")).toBeDefined();
+  });
+
   it("reports aborted, not a retryable server error, when cancelled during cleanup after a lost payload", async () => {
     // Codex review on PR #52: if the caller aborts while reader.cancel()
     // cleanup runs after a dropped payload, the direct terminal path must
