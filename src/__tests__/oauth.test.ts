@@ -54,6 +54,9 @@ vi.mock("../catalog.js", () => ({
   staticCnModels: [],
 }));
 
+// Releases without a usable `AuthStorage` export must degrade to the auth file.
+vi.mock("@earendil-works/pi-coding-agent", () => ({ AuthStorage: undefined }));
+
 describe("oauth autoLoginQoderFromEnvironment", () => {
   const originalEnv = process.env;
   let originalAuth: string | undefined;
@@ -108,6 +111,20 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
       "test@example.com",
       "global",
     );
+  });
+
+  it("stores an environment PAT login in the auth file when the framework has no AuthStorage", async () => {
+    process.env.QODER_PERSONAL_ACCESS_TOKEN = "pt-global-fallback";
+
+    await autoLoginQoderFromEnvironment("qoder-fallback-provider", "global");
+
+    const auth = JSON.parse(readFileSync(AUTH_FILE, "utf8")) as Record<string, Record<string, unknown>>;
+    expect(auth["qoder-fallback-provider"]).toMatchObject({
+      type: "oauth",
+      access: "mock-access-token",
+      userID: "mock-user-123",
+      machineID: "mock-machine-id",
+    });
   });
 
   it("passes a recorded-format identity into the model catalog refresh", async () => {

@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
-import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import { updateQoderModelsCache } from "../catalog.js";
 import { getMachineId } from "../cosy.js";
 import { getQoderRefreshURL, getQoderRegionConfig, type QoderMode } from "../region.js";
@@ -20,12 +19,25 @@ export interface QoderCredentials extends OAuthCredentials {
  * `AuthStorage` is not part of every pi-coding-agent release's public exports,
  * so it is read off the module namespace instead of imported by name: a missing
  * export must degrade to the auth-file fallback below, not break the build.
+ *
+ * The module is imported only when the environment-PAT path below needs it. pi
+ * resolves this specifier to its unbundled entry, so a module-scope namespace
+ * import loads thousands of modules and costs 170-340ms of every startup, while
+ * every other path never reads `AuthStorage`.
  */
-const AuthStorage = (
-  PiCodingAgent as unknown as {
-    AuthStorage?: { create?: () => { set: (providerID: string, credentials: unknown) => void } };
-  }
-).AuthStorage;
+type AuthStorageLike = {
+  create?: () => { set: (providerID: string, credentials: unknown) => void };
+};
+
+let authStoragePromise: Promise<AuthStorageLike | undefined> | undefined;
+
+function loadAuthStorage(): Promise<AuthStorageLike | undefined> {
+  authStoragePromise ??= import("@earendil-works/pi-coding-agent").then(
+    (namespace) => (namespace as unknown as { AuthStorage?: AuthStorageLike }).AuthStorage,
+    () => undefined,
+  );
+  return authStoragePromise;
+}
 
 const identityCache = new Map<string, QoderCredentials>();
 
@@ -107,6 +119,7 @@ export async function autoLoginQoderFromEnvironment(providerID: string, mode: Qo
   // account's credentials.
   const credentials = await credentialsFromPat(pat, mode);
 
+  const AuthStorage = await loadAuthStorage();
   if (typeof AuthStorage?.create === "function") {
     try {
       const authStorage = AuthStorage.create();
