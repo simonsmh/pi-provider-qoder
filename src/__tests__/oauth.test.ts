@@ -187,4 +187,18 @@ describe("loginQoderForMode waits for the model cache", () => {
       vi.useRealTimers();
     }
   });
+
+  it("clears the login timeout once the cache refresh finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.QODER_PERSONAL_ACCESS_TOKEN = "pt-test-123";
+      vi.mocked(updateQoderModelsCache).mockResolvedValueOnce(undefined);
+      const creds = await loginQoderForMode({} as OAuthLoginCallbacks, "global");
+      expect(creds.access).toBe("mock-access-token");
+      // The 15s fallback timer must not be left behind to hold the event loop.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

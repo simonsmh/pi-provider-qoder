@@ -241,13 +241,21 @@ async function awaitModelsCacheAfterLogin(
   email: string,
   mode: QoderMode,
 ): Promise<void> {
+  // Retain the fallback timer so it can be cleared: without this, a refresh
+  // that finishes early leaves the 15s timeout scheduled and the Node process
+  // cannot exit naturally until it fires.
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       updateQoderModelsCache(access, userID, name, email, mode),
-      new Promise((resolve) => setTimeout(resolve, LOGIN_MODEL_CACHE_TIMEOUT_MS)),
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, LOGIN_MODEL_CACHE_TIMEOUT_MS);
+      }),
     ]);
   } catch {
     // Best-effort: login succeeds even if the catalog fetch fails.
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
