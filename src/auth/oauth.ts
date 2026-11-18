@@ -195,13 +195,14 @@ export async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: Qo
     try {
       const creds = await credentialsFromPat(pat, mode);
       const qCreds = creds as QoderCredentials;
+      // Wait for the model cache (bounded) so the host's post-login refresh
+      // sees the real catalog instead of the static fallback.
+      await awaitModelsCacheAfterLogin(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode);
       // Persist the resolved identity locally so chat requests can resolve the real uid.
-      // Cache models in background
-      updateQoderModelsCache(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode).catch(() => {});
-      // Persist the resolved identity locally. OMP (17.x) stores login
-      // credentials in its own agent.db, not in ~/.pi/agent/auth.json, so
-      // without this the chat COSY payload would fall back to uid "qoder-user"
-      // and Qoder CN rejects it with "Login expired" (105).
+      // OMP (17.x) stores login credentials in its own agent.db, not in
+      // ~/.pi/agent/auth.json, so without this the chat COSY payload would
+      // fall back to uid "qoder-user" and Qoder CN rejects it with
+      // "Login expired" (105).
       saveCredentialsToAuthFile(providerID, creds);
       return creds;
     } catch {
@@ -212,15 +213,50 @@ export async function loginQoderForMode(callbacks: OAuthLoginCallbacks, mode: Qo
   // 2. Interactive login (CN only supports PAT prompt here; global supports device flow fallback)
   const creds = await interactiveLogin(callbacks, mode);
 
-  // Cache models in background.
-  try {
-    const qCreds = creds as QoderCredentials;
-    updateQoderModelsCache(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode).catch(() => {});
-  } catch {}
+  // Wait for the model cache (bounded) so the host's post-login refresh sees
+  // the real catalog instead of the static fallback.
+  const qCreds = creds as QoderCredentials;
+  await awaitModelsCacheAfterLogin(qCreds.access, qCreds.userID, qCreds.name, qCreds.email, mode);
 
   // Persist the resolved identity locally (see note above).
   saveCredentialsToAuthFile(providerID, creds);
   return creds;
+}
+
+/** Bound on waiting for the model cache after login (matches the model picker's refresh timeout). */
+const LOGIN_MODEL_CACHE_TIMEOUT_MS = 15_000;
+
+/**
+ * Wait for the model cache to refresh after login, bounded so a slow catalog
+ * fetch cannot block login. The host runs an offline model refresh right after
+ * login returns; if the cache is still cold at that point the provider keeps
+ * serving the static fallback list until the process restarts. Best-effort:
+ * on timeout or failure the refreshModels hook fetches again on the next
+ * online refresh (model picker / session start).
+ */
+async function awaitModelsCacheAfterLogin(
+  access: string,
+  userID: string,
+  name: string,
+  email: string,
+  mode: QoderMode,
+): Promise<void> {
+  // Retain the fallback timer so it can be cleared: without this, a refresh
+  // that finishes early leaves the 15s timeout scheduled and the Node process
+  // cannot exit naturally until it fires.
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      updateQoderModelsCache(access, userID, name, email, mode),
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, LOGIN_MODEL_CACHE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    // Best-effort: login succeeds even if the catalog fetch fails.
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 export async function refreshQoderTokenForMode(

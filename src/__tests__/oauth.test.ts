@@ -1,12 +1,14 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   autoLoginQoderFromEnvironment,
   clearQoderAuthMemCache,
   getCachedCredentials,
   getQoderPatForMode,
+  loginQoderForMode,
 } from "../auth/oauth.js";
 import { credentialsFromPat } from "../auth/pat.js";
 import { updateQoderModelsCache } from "../catalog.js";
@@ -136,5 +138,67 @@ describe("oauth autoLoginQoderFromEnvironment", () => {
       identity.email,
       "global",
     );
+  });
+});
+
+describe("loginQoderForMode waits for the model cache", () => {
+  it("waits for the model cache refresh before returning (PAT path)", async () => {
+    process.env.QODER_PERSONAL_ACCESS_TOKEN = "pt-test-123";
+    let resolveCache!: () => void;
+    const cachePromise = new Promise<void>((resolve) => {
+      resolveCache = resolve;
+    });
+    vi.mocked(updateQoderModelsCache).mockReturnValueOnce(cachePromise);
+    let loginResolved = false;
+    const loginPromise = loginQoderForMode({} as OAuthLoginCallbacks, "global").then((creds) => {
+      loginResolved = true;
+      return creds;
+    });
+
+    // Flush microtasks so the PAT exchange completes and login reaches the cache wait.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loginResolved).toBe(false);
+
+    resolveCache();
+    const creds = await loginPromise;
+    expect(loginResolved).toBe(true);
+    expect(creds.access).toBe("mock-access-token");
+    expect(updateQoderModelsCache).toHaveBeenCalledWith(
+      "mock-access-token",
+      "mock-user-123",
+      "Test User",
+      "test@example.com",
+      "global",
+    );
+  });
+
+  it("still returns when the model cache fetch hangs (bounded wait)", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.QODER_PERSONAL_ACCESS_TOKEN = "pt-test-123";
+      vi.mocked(updateQoderModelsCache).mockReturnValueOnce(new Promise<void>(() => {}));
+      const loginPromise = loginQoderForMode({} as OAuthLoginCallbacks, "global");
+
+      // Advance past the bounded wait; login must resolve without the fetch.
+      await vi.advanceTimersByTimeAsync(16_000);
+      const creds = await loginPromise;
+      expect(creds.access).toBe("mock-access-token");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the login timeout once the cache refresh finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.QODER_PERSONAL_ACCESS_TOKEN = "pt-test-123";
+      vi.mocked(updateQoderModelsCache).mockResolvedValueOnce(undefined);
+      const creds = await loginQoderForMode({} as OAuthLoginCallbacks, "global");
+      expect(creds.access).toBe("mock-access-token");
+      // The 15s fallback timer must not be left behind to hold the event loop.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
