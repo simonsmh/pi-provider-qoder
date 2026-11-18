@@ -712,7 +712,10 @@ export async function updateQoderModelsCache(
 
     for (const entry of chatModels) {
       const key = entry.key;
-      if (!key || !entry.enable || !entry.display_name) continue;
+      // Keep plan-disabled models listed so a configured model still resolves
+      // and the request surfaces Qoder's quota error (403 code 112) instead of
+      // "model not found". `auto` stays hidden unless the server enables it.
+      if (!key || !entry.display_name || (!entry.enable && key === "auto")) continue;
 
       const display = entry.display_name;
       // Prefer the largest selectable context option the catalog advertises

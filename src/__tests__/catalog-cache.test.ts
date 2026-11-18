@@ -150,7 +150,7 @@ describe("Qoder model cache", () => {
     expect(getCachedModelConfig("q37fmodel", "global")).toBeNull();
   });
 
-  it("keeps only enabled service models without adding auto as a fallback", async () => {
+  it("keeps plan-disabled models but not a disabled auto", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -170,7 +170,7 @@ describe("Qoder model cache", () => {
     await updateQoderModelsCache("access-token", "user-id", "Test User", "test@example.com", "global");
 
     const cache = JSON.parse(readFileSync(CACHE_PATHS.global, "utf8"));
-    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["Ultimate", "Lite"]);
+    expect(cache.models.map((model: { id: string }) => model.id)).toEqual(["Ultimate", "Lite", "Performance"]);
     expect(cache.models.some((model: { id: string }) => model.id === "auto")).toBe(false);
   });
 
