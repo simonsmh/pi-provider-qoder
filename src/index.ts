@@ -1,10 +1,11 @@
 import { createRequire } from "node:module";
-import type { Api, Model, OAuthCredentials } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import type { Api, Model, OAuthCredentials, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import {
   autoLoginQoderFromEnvironment,
   getCachedCredentials,
   loginQoderForMode,
+  type QoderCredentials,
   refreshQoderTokenForMode,
 } from "./auth/oauth.js";
 import { fetchQoderUsageForMode } from "./auth/usage.js";
@@ -53,6 +54,55 @@ function modelsForProvider(mode: QoderMode, providerID: string): Model<Api>[] {
   })) as unknown as Model<Api>[];
 }
 
+/**
+ * Resolve the identity the catalog fetch needs from a refresh context: the
+ * effective OAuth credential the host resolved, falling back to auth.json.
+ * The host stores the full OAuthCredentials (including userID/email/name) it
+ * persisted at login, so this is the authoritative identity; auth.json only
+ * covers hosts whose store is not visible here.
+ */
+function resolveRefreshCredentials(context: RefreshModelsContext, providerID: string): QoderCredentials | null {
+  const credential = context.credential;
+  if (credential?.type === "oauth") {
+    const oauth = credential as unknown as QoderCredentials;
+    if (oauth.access) return oauth;
+  }
+  return getCachedCredentials("", providerID);
+}
+
+/**
+ * Host-driven model refresh (dynamic-provider hook). The host calls this after
+ * login, on session start, and when the model picker opens. The offline phase
+ * (allowNetwork false) returns the current cached list without network; the
+ * online phase fetches the live catalog with the effective credential first,
+ * so a fresh login shows the real models without a restart.
+ *
+ * This is deliberately a top-level `refreshModels`, not `oauth.modifyModels`:
+ * OMP does a whole-catalog structuredClone before invoking modifyModels and
+ * its bundled catalog contains a non-cloneable model, which removes qoder
+ * from `omp models` (see the NOTE on createQoderOAuth).
+ */
+export async function refreshQoderModelsForMode(
+  mode: QoderMode,
+  context: RefreshModelsContext,
+): Promise<ProviderModelConfig[]> {
+  const providerID = getQoderRegionConfig(mode).providerID;
+  if (context.allowNetwork && !context.signal.aborted) {
+    const creds = resolveRefreshCredentials(context, providerID);
+    if (creds?.access) {
+      const region = getQoderRegionConfig(mode);
+      await updateQoderModelsCache(
+        creds.access,
+        creds.userID || "qoder-user",
+        creds.name || region.userNameFallback,
+        creds.email || region.userEmailFallback,
+        mode,
+      );
+    }
+  }
+  return modelsForProvider(mode, providerID) as unknown as ProviderModelConfig[];
+}
+
 function createQoderOAuth(mode: QoderMode): OAuthConfigWithUsage {
   const region = getQoderRegionConfig(mode);
   return {
@@ -78,6 +128,10 @@ function registerQoderProvider(pi: ExtensionAPI, mode: QoderMode): void {
     baseUrl: getQoderBaseUrl(mode),
     api: QODER_API,
     models: modelsForProvider(mode, providerID) as unknown as ProviderConfig["models"],
+    // Host-driven refresh (see refreshQoderModelsForMode): without this the
+    // host's post-login refresh skips qoder entirely and the static fallback
+    // list stays visible until the process restarts.
+    refreshModels: (context) => refreshQoderModelsForMode(mode, context),
     oauth: oauth as ProviderConfig["oauth"],
     // pi-coding-agent resolves its own nested @earendil-works/pi-ai copy, so the
     // structurally identical Model/Context types are nominally distinct here.
