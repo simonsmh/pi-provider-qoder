@@ -86,7 +86,7 @@ function getHomeDir(): string {
 
 export function getMachineId(): string {
   const home = getHomeDir();
-  const paths = [join(home, ".qoder", ".auth", "machine_id"), join(home, ".pi", "agent", "qoder-machine-id")];
+  const paths = [join(home, ".qoder", ".auth", "machine_id"), join(process.env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent"), "qoder-machine-id")];
   for (const p of paths) {
     if (existsSync(p)) {
       try {

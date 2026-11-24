@@ -88,7 +88,7 @@ function getHomeDir(): string {
 }
 
 function getQoderCachePath(mode: QoderMode): string {
-  return join(getHomeDir(), ".pi", "agent", getQoderRegionConfig(mode).modelCacheFile);
+  return join(process.env.PI_CODING_AGENT_DIR || join(getHomeDir(), ".pi", "agent"), getQoderRegionConfig(mode).modelCacheFile);
 }
 
 interface ParsedModelCache {
