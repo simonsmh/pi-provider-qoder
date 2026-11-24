@@ -46,7 +46,7 @@ function getHomeDir(): string {
 }
 
 function getAuthFilePath(): string {
-  return join(getHomeDir(), ".pi", "agent", "auth.json");
+  return join(process.env.PI_CODING_AGENT_DIR || join(getHomeDir(), ".pi", "agent"), "auth.json");
 }
 
 /** Memoized parse of auth.json; invalidated on save. undefined = not loaded. */

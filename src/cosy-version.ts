@@ -40,7 +40,7 @@ function getHomeDir(): string {
 }
 
 function getCosyVersionCachePath(): string {
-  return join(getHomeDir(), ".pi", "agent", CACHE_FILE);
+  return join(process.env.PI_CODING_AGENT_DIR || join(getHomeDir(), ".pi", "agent"), CACHE_FILE);
 }
 
 /** In-memory cache keyed by absolute cache path (HOME-safe across tests). */
